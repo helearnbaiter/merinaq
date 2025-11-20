@@ -1,17 +1,15 @@
 ```
 # Compiled and build artifacts
-target/
 *.o
 *.obj
-*.a
-*.so
-*.dll
 *.exe
+*.dll
+*.so
+*.a
 *.out
 
 # Dependencies
-Cargo.lock
-**/vendor/
+target/
 **/target/
 
 # Logs and temp files
@@ -19,27 +17,16 @@ Cargo.lock
 *.tmp
 *.swp
 
+# Editors
+.vscode/
+.idea/
+
 # Environment
 .env
 .env.local
 *.env.*
 
-# Editors
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Coverage
-coverage/
-htmlcov/
-.coverage
-
 # Rust-specific
+Cargo.lock
 **/Cargo.lock
-**/target/
-**/vendor/
-**/rust-toolchain.toml
-**/.clippy.toml
-**/.rustfmt.toml
 ```
