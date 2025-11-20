@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use crate::{
     models::{User, AuthRequest, AuthResponse, TokenClaims, NewUser},
-    auth::{JwtUtils, hash_password, verify_password, OAuth2Manager, OAuth2Provider, UserInfo},
+    auth::{JwtUtils, hash_password, verify_password, OAuth2Manager, OAuth2Provider, UserInfo, OAuth2SessionManager},
     database::DatabasePool,
     config::AuthSettings,
 };
@@ -17,8 +17,11 @@ use crate::{
 pub struct AuthService {
     jwt_utils: JwtUtils,
     oauth2_manager: Arc<RwLock<OAuth2Manager>>,
+    oauth2_state_manager: Arc<RwLock<OAuth2SessionManager>>,
     // In a real application, you might want to use a more robust session store
     active_sessions: Arc<RwLock<HashMap<String, String>>>,
+    // Store active refresh tokens for invalidation
+    active_refresh_tokens: Arc<RwLock<HashMap<String, String>>>, // token_hash -> user_id
 }
 
 impl AuthService {
@@ -26,11 +29,13 @@ impl AuthService {
         AuthService {
             jwt_utils: JwtUtils::new(
                 settings.jwt_secret.clone(), 
-                settings.jwt_expiration, 
-                settings.refresh_token_expiration
+                settings.jwt_expiration as i64, 
+                settings.refresh_token_expiration as i64
             ),
             oauth2_manager: Arc::new(RwLock::new(OAuth2Manager::new())),
+            oauth2_state_manager: Arc::new(RwLock::new(OAuth2SessionManager::new(300))), // 5 minutes TTL for OAuth2 states
             active_sessions: Arc::new(RwLock::new(HashMap::new())),
+            active_refresh_tokens: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -50,6 +55,10 @@ impl AuthService {
                 // Store session (in a real app, you'd use Redis or similar)
                 let mut sessions = self.active_sessions.write().await;
                 sessions.insert(user.id.to_string(), token.clone());
+                
+                // Store refresh token for invalidation
+                let mut refresh_tokens = self.active_refresh_tokens.write().await;
+                refresh_tokens.insert(refresh_token.clone(), user.id.to_string());
                 
                 Ok(AuthResponse {
                     success: true,
@@ -121,6 +130,10 @@ impl AuthService {
         let mut sessions = self.active_sessions.write().await;
         sessions.insert(user.id.to_string(), token.clone());
 
+        // Store refresh token for invalidation
+        let mut refresh_tokens = self.active_refresh_tokens.write().await;
+        refresh_tokens.insert(refresh_token.clone(), user.id.to_string());
+
         Ok(AuthResponse {
             success: true,
             token: Some(token),
@@ -137,16 +150,28 @@ impl AuthService {
         // Validate refresh token
         let claims = self.jwt_utils.validate_token(refresh_token)?;
         
+        // Check if refresh token is in our active tokens list
+        let refresh_tokens = self.active_refresh_tokens.read().await;
+        if !refresh_tokens.contains_key(refresh_token) {
+            return Err(anyhow::anyhow!("Refresh token not found in active tokens"));
+        }
+        drop(refresh_tokens); // Release the read lock
+        
         // Generate new access token
         let new_token = self.jwt_utils.generate_token(claims.sub.clone(), claims.role.clone())?;
         
-        // In a real application, you might want to generate a new refresh token as well
-        // and possibly invalidate the old one
+        // Generate a new refresh token (refresh token rotation)
+        let new_refresh_token = self.jwt_utils.generate_refresh_token(claims.sub.clone(), claims.role.clone())?;
+        
+        // Remove the old refresh token and add the new one
+        let mut refresh_tokens = self.active_refresh_tokens.write().await;
+        refresh_tokens.remove(refresh_token); // Invalidate old refresh token
+        refresh_tokens.insert(new_refresh_token.clone(), claims.sub.clone()); // Add new refresh token
         
         Ok(AuthResponse {
             success: true,
             token: Some(new_token),
-            refresh_token: Some(refresh_token.to_string()), // Return same refresh token for now
+            refresh_token: Some(new_refresh_token), // Return new refresh token
             user: None, // User info not needed in refresh response
             error: None,
         })
@@ -194,6 +219,16 @@ impl AuthService {
 
     pub async fn is_token_valid(&self, token: &str) -> bool {
         self.jwt_utils.validate_token(token).is_ok()
+    }
+
+    pub async fn generate_oauth2_state(&self, redirect_uri: Option<String>) -> String {
+        let mut state_manager = self.oauth2_state_manager.write().await;
+        state_manager.generate_state(redirect_uri)
+    }
+
+    pub async fn validate_oauth2_state(&self, state: &str) -> Option<crate::auth::OAuth2State> {
+        let mut state_manager = self.oauth2_state_manager.write().await;
+        state_manager.validate_state(state)
     }
 
     pub async fn add_oauth2_provider(&self, name: String, provider: OAuth2Provider) {

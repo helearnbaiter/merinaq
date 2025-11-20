@@ -10,6 +10,7 @@ use chrono::Utc;
 use std::collections::HashMap;
 use reqwest::Client;
 use serde_json::Value;
+use uuid::Uuid;
 
 use crate::models::TokenClaims;
 
@@ -56,6 +57,53 @@ impl JwtUtils {
         validation.validate_exp = true;
         let token_data = decode::<TokenClaims>(token, &self.secret.as_ref().into(), &validation)?;
         Ok(token_data.claims)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OAuth2State {
+    pub state: String,
+    pub timestamp: i64,
+    pub redirect_uri: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OAuth2SessionManager {
+    // In a real application, this would be Redis or another distributed store
+    active_states: HashMap<String, OAuth2State>,
+    state_ttl: i64, // Time to live for OAuth2 states in seconds
+}
+
+impl OAuth2SessionManager {
+    pub fn new(state_ttl: i64) -> Self {
+        OAuth2SessionManager {
+            active_states: HashMap::new(),
+            state_ttl,
+        }
+    }
+
+    pub fn generate_state(&mut self, redirect_uri: Option<String>) -> String {
+        let state = Uuid::new_v4().to_string();
+        let timestamp = Utc::now().timestamp();
+        
+        self.active_states.insert(state.clone(), OAuth2State {
+            state: state.clone(),
+            timestamp,
+            redirect_uri,
+        });
+        
+        state
+    }
+
+    pub fn validate_state(&mut self, state: &str) -> Option<OAuth2State> {
+        if let Some(oauth2_state) = self.active_states.get(state) {
+            let current_time = Utc::now().timestamp();
+            if current_time - oauth2_state.timestamp <= self.state_ttl {
+                // Remove the state after validation (one-time use)
+                return self.active_states.remove(state);
+            }
+        }
+        None
     }
 }
 
