@@ -2,7 +2,6 @@
 //! 
 //! Handles SQL query execution across multiple data sources using DataFusion
 
-use anyhow::Result;
 use std::sync::Arc;
 use datafusion::prelude::*;
 use datafusion::error::DataFusionError;
@@ -11,6 +10,7 @@ use tracing::info;
 
 use crate::database::DatabasePool;
 use crate::models::{ExecuteQueryRequest, ExecuteQueryResponse};
+use crate::utils::error::{PlatformError, PlatformResult};
 
 pub struct QueryService {
     db_pool: DatabasePool,
@@ -21,9 +21,10 @@ impl QueryService {
         QueryService { db_pool }
     }
 
-    pub async fn execute_query(&self, request: &ExecuteQueryRequest) -> Result<ExecuteQueryResponse> {
+    pub async fn execute_query(&self, request: &ExecuteQueryRequest) -> PlatformResult<ExecuteQueryResponse> {
         // Get data source configuration
-        let data_source = match self.db_pool.get_data_source_by_id(request.data_source_id).await? {
+        let data_source = match self.db_pool.get_data_source_by_id(request.data_source_id).await
+            .map_err(|e| PlatformError::DatabaseError(e))? {
             Some(ds) => ds,
             None => {
                 return Ok(ExecuteQueryResponse {
@@ -60,7 +61,7 @@ impl QueryService {
         }
     }
 
-    async fn execute_postgres_query(&self, data_source: &crate::models::DataSource, sql: &str) -> Result<ExecuteQueryResponse> {
+    async fn execute_postgres_query(&self, data_source: &crate::models::DataSource, sql: &str) -> PlatformResult<ExecuteQueryResponse> {
         let start_time = std::time::Instant::now();
         
         // In a real implementation, we'd connect to the actual PostgreSQL database
@@ -153,7 +154,7 @@ impl QueryService {
         }
     }
 
-    async fn execute_mysql_query(&self, data_source: &crate::models::DataSource, sql: &str) -> Result<ExecuteQueryResponse> {
+    async fn execute_mysql_query(&self, data_source: &crate::models::DataSource, sql: &str) -> PlatformResult<ExecuteQueryResponse> {
         // Implementation for MySQL queries
         // Would use sqlx with MySQL feature in a real implementation
         Ok(ExecuteQueryResponse {
@@ -164,7 +165,7 @@ impl QueryService {
         })
     }
 
-    async fn execute_csv_query(&self, data_source: &crate::models::DataSource, sql: &str) -> Result<ExecuteQueryResponse> {
+    async fn execute_csv_query(&self, data_source: &crate::models::DataSource, sql: &str) -> PlatformResult<ExecuteQueryResponse> {
         // Implementation for CSV queries using DataFusion
         let start_time = std::time::Instant::now();
         
@@ -184,7 +185,7 @@ impl QueryService {
         })
     }
 
-    async fn execute_parquet_query(&self, data_source: &crate::models::DataSource, sql: &str) -> Result<ExecuteQueryResponse> {
+    async fn execute_parquet_query(&self, data_source: &crate::models::DataSource, sql: &str) -> PlatformResult<ExecuteQueryResponse> {
         // Implementation for Parquet queries using DataFusion
         let start_time = std::time::Instant::now();
         
@@ -204,12 +205,13 @@ impl QueryService {
         })
     }
 
-    pub async fn get_schema(&self, data_source_id: i32) -> Result<serde_json::Value> {
+    pub async fn get_schema(&self, data_source_id: i32) -> PlatformResult<serde_json::Value> {
         // Get data source
-        let data_source = match self.db_pool.get_data_source_by_id(data_source_id).await? {
+        let data_source = match self.db_pool.get_data_source_by_id(data_source_id).await
+            .map_err(|e| PlatformError::DatabaseError(e))? {
             Some(ds) => ds,
             None => {
-                return Err(anyhow::anyhow!("Data source not found"));
+                return Err(PlatformError::NotFound("Data source not found".to_string()));
             }
         };
 
@@ -231,17 +233,22 @@ impl QueryService {
                 
                 let rows = sqlx::query(schema_query)
                     .fetch_all(&self.db_pool.pool)
-                    .await?;
+                    .await
+                    .map_err(|e| PlatformError::DatabaseError(e))?;
                 
                 let mut schema = serde_json::Map::new();
                 let mut current_table = String::new();
                 let mut current_table_cols = serde_json::Map::new();
                 
                 for row in rows {
-                    let table_name: String = row.try_get("table_name")?;
-                    let column_name: String = row.try_get("column_name")?;
-                    let data_type: String = row.try_get("data_type")?;
-                    let is_nullable: String = row.try_get("is_nullable")?;
+                    let table_name: String = row.try_get("table_name")
+                        .map_err(|e| PlatformError::DatabaseError(sqlx::Error::ColumnNotFound(e.to_string())))?;
+                    let column_name: String = row.try_get("column_name")
+                        .map_err(|e| PlatformError::DatabaseError(sqlx::Error::ColumnNotFound(e.to_string())))?;
+                    let data_type: String = row.try_get("data_type")
+                        .map_err(|e| PlatformError::DatabaseError(sqlx::Error::ColumnNotFound(e.to_string())))?;
+                    let is_nullable: String = row.try_get("is_nullable")
+                        .map_err(|e| PlatformError::DatabaseError(sqlx::Error::ColumnNotFound(e.to_string())))?;
                     
                     if table_name != current_table && !current_table.is_empty() {
                         schema.insert(current_table.clone(), serde_json::Value::Object(current_table_cols.clone()));
@@ -263,7 +270,7 @@ impl QueryService {
                 Ok(serde_json::Value::Object(schema))
             }
             _ => {
-                Err(anyhow::anyhow!("Schema introspection not supported for this data source type"))
+                Err(PlatformError::ValidationError("Schema introspection not supported for this data source type".to_string()))
             }
         }
     }

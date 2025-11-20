@@ -1,0 +1,32 @@
+# Development Environment Configuration
+
+[app]
+debug = true
+log_level = "DEBUG"
+
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[database]
+url = "postgresql://dev_user:dev_password@localhost/data_platform_dev"
+pool_size = 10
+
+[auth]
+jwt_secret = "dev-jwt-secret-key-change-in-production"
+
+[query_engine]
+max_concurrent_queries = 10
+query_timeout = 60  # 1 minute for development
+result_cache_ttl = 60  # 1 minute
+memory_limit = "512MB"
+
+[logging]
+level = "DEBUG"
+format = "text"
+file_path = "./logs/app_dev.log"
+
+[security]
+enable_cors = true
+allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000", "chrome-extension://*", "moz-extension://*"]
+enable_rate_limiting = false  # Disabled for development

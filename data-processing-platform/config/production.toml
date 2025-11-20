@@ -1,0 +1,55 @@
+# Production Environment Configuration
+
+[app]
+debug = false
+log_level = "INFO"
+
+[server]
+host = "0.0.0.0"
+port = 8080
+timeout = 30
+
+[database]
+url = "${DATABASE_URL}"  # Use environment variable
+pool_size = 50
+connection_timeout = 30
+max_connections = 100
+
+[auth]
+jwt_secret = "${JWT_SECRET}"  # Use environment variable
+jwt_expiration = 1800  # 30 minutes in production
+refresh_token_expiration = 604800  # 7 days in seconds
+
+[query_engine]
+max_concurrent_queries = 200
+query_timeout = 600  # 10 minutes for production
+result_cache_ttl = 900  # 15 minutes
+memory_limit = "4GB"
+enable_query_cache = true
+enable_query_optimization = true
+
+[logging]
+level = "INFO"
+format = "json"
+file_path = "/var/log/data-platform/app.log"
+enable_syslog = true
+
+[monitoring]
+enabled = true
+metrics_endpoint = "/metrics"
+tracing_enabled = true
+tracing_endpoint = "${JAEGER_ENDPOINT}"
+
+[security]
+enable_cors = true
+allowed_origins = ["https://yourdomain.com", "https://app.yourdomain.com"]
+enable_rate_limiting = true
+rate_limit_requests = 1000
+rate_limit_window = 60  # seconds
+enable_request_logging = true
+ssl_required = true
+
+[performance]
+connection_pool_monitoring = true
+query_performance_monitoring = true
+slow_query_threshold = 5000  # 5 seconds in milliseconds

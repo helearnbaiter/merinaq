@@ -17,6 +17,7 @@ use axum::{
     extract::Extension,
     http::Method,
     middleware::{from_fn},
+    response::Response,
     routing::{get, post, put, delete},
     Router,
 };
@@ -32,10 +33,11 @@ use crate::{
     services::auth_service::AuthService,
     services::casbin_service::CasbinService,
     services::query_service::QueryService,
+    utils::error::{PlatformError, PlatformResult},
 };
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> PlatformResult<()> {
     // Initialize logging
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
@@ -45,15 +47,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Starting Data Processing Platform...");
 
     // Load configuration
-    let config = AppConfig::from_env().await?;
+    let config = AppConfig::from_env().await.map_err(|e| PlatformError::ConfigError(e.to_string()))?;
     info!("Configuration loaded: {:?}", config.app_name);
 
     // Initialize database pool
-    let db_pool = DatabasePool::new(&config.database_url).await?;
+    let db_pool = DatabasePool::new(&config.database_url).await.map_err(|e| PlatformError::DatabaseError(e))?;
     info!("Database pool initialized");
 
     // Initialize Casbin service
-    let casbin_enforcer = CasbinService::new(&config.database_url).await?;
+    let casbin_enforcer = CasbinService::new(&config.database_url).await.map_err(|e| PlatformError::CasbinError(e))?;
     info!("Casbin service initialized");
 
     // Initialize Auth service
@@ -117,13 +119,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Run server
     let listener = tokio::net::TcpListener::bind(&format!("{}:{}", config.server_host, config.server_port))
         .await
-        .unwrap();
+        .map_err(|e| PlatformError::InternalError(format!("Failed to bind to address: {}", e)))?;
     
     info!("Server running on http://{}:{}", config.server_host, config.server_port);
     
     axum::serve(listener, app)
         .await
-        .unwrap();
+        .map_err(|e| PlatformError::InternalError(format!("Server error: {}", e)))?;
 
     Ok(())
 }
