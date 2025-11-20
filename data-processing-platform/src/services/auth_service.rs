@@ -11,6 +11,7 @@ use crate::{
     models::{User, AuthRequest, AuthResponse, TokenClaims},
     auth::{JwtUtils, hash_password, verify_password},
     database::DatabasePool,
+    config::AuthSettings,
 };
 
 pub struct AuthService {
@@ -20,9 +21,9 @@ pub struct AuthService {
 }
 
 impl AuthService {
-    pub fn new(jwt_secret: String) -> Self {
+    pub fn new(settings: &AuthSettings) -> Self {
         AuthService {
-            jwt_utils: JwtUtils::new(jwt_secret, 3600), // 1 hour expiration
+            jwt_utils: JwtUtils::new(settings.jwt_secret.clone(), settings.jwt_expiration),
             active_sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }

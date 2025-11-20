@@ -5,6 +5,7 @@ A high-performance enterprise data processing platform built with Rust, providin
 ## Features
 
 - **High Performance**: Built with Rust for memory safety and performance
+- **Multi-Environment Configuration**: Supports development, testing, and production environments
 - **Unified Data Access**: Query multiple data sources through a single interface
 - **Enterprise Security**: Role-based access control with Casbin
 - **Authentication**: JWT-based authentication with OAuth2 support
@@ -99,33 +100,36 @@ data-processing-platform/
 
 ## Configuration
 
-Create a `.env` file in the root directory with the following variables:
+The application supports multiple environments through a hierarchical configuration system:
+
+```
+config/
+├── base.toml          # Common configuration for all environments
+├── development.toml   # Development-specific settings
+├── testing.toml       # Testing-specific settings
+└── production.toml    # Production-specific settings
+```
+
+Configuration is loaded based on the `RUN_MODE` environment variable:
 
 ```bash
-# Application
-APP_NAME="Data Processing Platform"
-SERVER_HOST="0.0.0.0"
-SERVER_PORT=8080
+# Default to development
+RUN_MODE=development cargo run
 
-# Database
-DATABASE_URL="postgresql://user:password@localhost/data_platform"
-DB_MAX_CONNECTIONS=20
-DB_MIN_CONNECTIONS=5
-DB_CONNECTION_TIMEOUT=30
+# For production
+RUN_MODE=production cargo run
 
-# JWT
-JWT_SECRET="your-super-secret-jwt-key-here"
-JWT_EXPIRATION=3600
-
-# Casbin
-CASBIN_MODEL_PATH="config/rbac_model.conf"
-CASBIN_POLICY_PATH="config/policy.csv"
-
-# OAuth2 (optional)
-OAUTH2_CLIENT_ID="your-oauth2-client-id"
-OAUTH2_CLIENT_SECRET="your-oauth2-client-secret"
-OAUTH2_REDIRECT_URL="http://localhost:8080/auth/callback"
+# For testing
+RUN_MODE=testing cargo run
 ```
+
+You can also override configuration values using environment variables with the `APP__` prefix:
+
+```bash
+APP__server__port=9000 RUN_MODE=production cargo run
+```
+
+For backward compatibility, you can still use environment variables as defined below.
 
 ## Database Setup
 
@@ -210,6 +214,7 @@ JWT_SECRET="production-jwt-secret-key"
 
 - All API endpoints are protected with JWT authentication
 - Role-based access control using Casbin
+- Environment-specific security configurations
 - SQL injection protection through parameterized queries
 - Input validation and sanitization
 - Secure password hashing with bcrypt

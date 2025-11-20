@@ -47,19 +47,19 @@ async fn main() -> PlatformResult<()> {
     info!("Starting Data Processing Platform...");
 
     // Load configuration
-    let config = AppConfig::from_env().await.map_err(|e| PlatformError::ConfigError(e.to_string()))?;
-    info!("Configuration loaded: {:?}", config.app_name);
+    let config = AppConfig::from_env().map_err(|e| PlatformError::ConfigError(e.to_string()))?;
+    info!("Configuration loaded: {:?}", config.app.name);
 
     // Initialize database pool
-    let db_pool = DatabasePool::new(&config.database_url).await.map_err(|e| PlatformError::DatabaseError(e))?;
+    let db_pool = DatabasePool::new(&config.database.get_database_url()).await.map_err(|e| PlatformError::DatabaseError(e))?;
     info!("Database pool initialized");
 
     // Initialize Casbin service
-    let casbin_enforcer = CasbinService::new(&config.database_url).await.map_err(|e| PlatformError::CasbinError(e))?;
+    let casbin_enforcer = CasbinService::new(&config.database.get_database_url()).await.map_err(|e| PlatformError::CasbinError(e))?;
     info!("Casbin service initialized");
 
     // Initialize Auth service
-    let auth_service = AuthService::new(config.jwt_secret.clone());
+    let auth_service = AuthService::new(&config.auth);
     info!("Auth service initialized");
 
     // Initialize Query service
@@ -117,11 +117,11 @@ async fn main() -> PlatformResult<()> {
         .layer(Extension(query_service));
 
     // Run server
-    let listener = tokio::net::TcpListener::bind(&format!("{}:{}", config.server_host, config.server_port))
+    let listener = tokio::net::TcpListener::bind(&format!("{}:{}", config.server.host, config.server.port))
         .await
         .map_err(|e| PlatformError::InternalError(format!("Failed to bind to address: {}", e)))?;
     
-    info!("Server running on http://{}:{}", config.server_host, config.server_port);
+    info!("Server running on http://{}:{}", config.server.host, config.server.port);
     
     axum::serve(listener, app)
         .await
