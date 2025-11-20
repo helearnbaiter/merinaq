@@ -3,6 +3,11 @@
 //! This module implements a high-performance query engine based on Apache Arrow's DataFusion
 //! that supports multi-data source federated queries, including memory tables, files, 
 //! relational databases, and remote data sources.
+//! 
+//! The implementation includes:
+//! - Arrow memory format utilities for efficient data processing
+//! - Flight SQL protocol for high-performance data transfer
+//! - ADBC (Arrow Database Connectivity) for standardized database access
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -16,6 +21,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use url::Url;
 use anyhow::Result;
+
+// Import Arrow memory format utilities
+use crate::query_engine::arrow::utils as arrow_utils;
 
 // Data source configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,6 +240,7 @@ impl DataSourcePlugin for IcebergDataSourcePlugin {
         Ok(())
     }
 }
+
 
 // Query engine implementation
 pub struct QueryEngine {
@@ -500,6 +509,7 @@ fn record_batch_to_json(batch: &RecordBatch) -> Result<Vec<serde_json::Value>> {
     Ok(result)
 }
 
+pub mod arrow;
 pub mod flight_sql;
 pub mod adbc;
 pub mod distributed_scheduler;
