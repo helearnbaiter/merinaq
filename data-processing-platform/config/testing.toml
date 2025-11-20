@@ -1,0 +1,32 @@
+# Testing Environment Configuration
+
+[app]
+debug = true
+log_level = "TRACE"
+
+[server]
+host = "127.0.0.1"
+port = 8081  # Different port for testing
+
+[database]
+url = "postgresql://test_user:test_password@localhost/data_platform_test"
+pool_size = 5
+
+[auth]
+jwt_secret = "test-jwt-secret-key-for-unit-tests"
+
+[query_engine]
+max_concurrent_queries = 5
+query_timeout = 30  # 30 seconds for testing
+result_cache_ttl = 10  # 10 seconds
+memory_limit = "256MB"
+
+[logging]
+level = "TRACE"
+format = "text"
+file_path = "./logs/app_test.log"
+
+[security]
+enable_cors = true
+allowed_origins = ["http://localhost:3000"]
+enable_rate_limiting = false  # Disabled for testing

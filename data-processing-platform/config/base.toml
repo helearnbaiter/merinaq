@@ -1,0 +1,44 @@
+# Base Configuration for Data Processing Platform
+
+[app]
+name = "Data Processing Platform"
+version = "1.0.0"
+description = "Modern data processing platform built with Rust"
+
+[server]
+host = "0.0.0.0"
+port = 8080
+timeout = 30
+
+[database]
+url = "postgresql://user:password@localhost/data_platform"
+pool_size = 20
+connection_timeout = 30
+
+[auth]
+jwt_secret = "your-jwt-secret-key-here"
+jwt_expiration = 3600  # 1 hour in seconds
+refresh_token_expiration = 86400  # 24 hours in seconds
+
+[query_engine]
+max_concurrent_queries = 100
+query_timeout = 300  # 5 minutes
+result_cache_ttl = 300  # 5 minutes
+memory_limit = "1GB"
+
+[logging]
+level = "INFO"
+format = "json"
+file_path = "/var/log/data-platform/app.log"
+
+[monitoring]
+enabled = true
+metrics_endpoint = "/metrics"
+tracing_enabled = true
+
+[security]
+enable_cors = true
+allowed_origins = ["*"]
+enable_rate_limiting = true
+rate_limit_requests = 100
+rate_limit_window = 60  # seconds
