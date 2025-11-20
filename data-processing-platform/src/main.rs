@@ -101,10 +101,22 @@ async fn initialize_oauth2_providers(
 
 #[tokio::main]
 async fn main() -> PlatformResult<()> {
-    // Initialize logging
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
-        .finish();
+    // Initialize logging with EnvFilter for more flexible configuration
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+    
+    let filter = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new("info,data_processing_platform=debug"))
+        .expect("Failed to create tracing filter");
+    
+    let subscriber = tracing_subscriber::registry()
+        .with(filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(true)
+                .with_line_number(true)
+                .with_ansi(true)
+        );
+    
     tracing::subscriber::set_global_default(subscriber).expect("Setting default subscriber failed");
 
     info!("Starting Data Processing Platform...");
@@ -143,6 +155,7 @@ async fn main() -> PlatformResult<()> {
     // Add health check at the root level
     .route("/health", get(handlers::health::health_check))
     // Apply middleware
+    .layer(from_fn(middleware::tracing::tracing_middleware))
     .layer(from_fn(middleware::auth::auth_middleware))
     .layer(
         CorsLayer::new()
