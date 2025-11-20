@@ -40,6 +40,12 @@ pub struct ServerSettings {
     pub timeout: u64,
 }
 
+impl ServerSettings {
+    pub fn get_base_url(&self) -> String {
+        format!("http://{}:{}", self.host, self.port)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseSettings {
     pub url: String,
@@ -57,6 +63,18 @@ pub struct AuthSettings {
     pub jwt_expiration: u64, // in seconds
     #[serde(default = "default_refresh_token_expiration")]
     pub refresh_token_expiration: u64, // in seconds
+    #[serde(default)]
+    pub google: Option<OAuth2ProviderConfig>,
+    #[serde(default)]
+    pub github: Option<OAuth2ProviderConfig>,
+    #[serde(default)]
+    pub facebook: Option<OAuth2ProviderConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuth2ProviderConfig {
+    pub client_id: String,
+    pub client_secret: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

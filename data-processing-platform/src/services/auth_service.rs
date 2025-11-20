@@ -8,14 +8,15 @@ use tokio::sync::RwLock;
 use std::collections::HashMap;
 
 use crate::{
-    models::{User, AuthRequest, AuthResponse, TokenClaims},
-    auth::{JwtUtils, hash_password, verify_password},
+    models::{User, AuthRequest, AuthResponse, TokenClaims, NewUser},
+    auth::{JwtUtils, hash_password, verify_password, OAuth2Manager, OAuth2Provider, UserInfo},
     database::DatabasePool,
     config::AuthSettings,
 };
 
 pub struct AuthService {
     jwt_utils: JwtUtils,
+    oauth2_manager: Arc<RwLock<OAuth2Manager>>,
     // In a real application, you might want to use a more robust session store
     active_sessions: Arc<RwLock<HashMap<String, String>>>,
 }
@@ -23,7 +24,12 @@ pub struct AuthService {
 impl AuthService {
     pub fn new(settings: &AuthSettings) -> Self {
         AuthService {
-            jwt_utils: JwtUtils::new(settings.jwt_secret.clone(), settings.jwt_expiration),
+            jwt_utils: JwtUtils::new(
+                settings.jwt_secret.clone(), 
+                settings.jwt_expiration, 
+                settings.refresh_token_expiration
+            ),
+            oauth2_manager: Arc::new(RwLock::new(OAuth2Manager::new())),
             active_sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -39,6 +45,7 @@ impl AuthService {
             if verify_password(&auth_request.password, &user.password_hash)? {
                 // Generate JWT token
                 let token = self.jwt_utils.generate_token(user.id.to_string(), user.role.clone())?;
+                let refresh_token = self.jwt_utils.generate_refresh_token(user.id.to_string(), user.role.clone())?;
                 
                 // Store session (in a real app, you'd use Redis or similar)
                 let mut sessions = self.active_sessions.write().await;
@@ -47,7 +54,7 @@ impl AuthService {
                 Ok(AuthResponse {
                     success: true,
                     token: Some(token),
-                    refresh_token: None, // In a real app, implement refresh tokens
+                    refresh_token: Some(refresh_token),
                     user: Some(user),
                     error: None,
                 })
@@ -71,6 +78,80 @@ impl AuthService {
         }
     }
 
+    pub async fn authenticate_oauth2_user(
+        &self,
+        db_pool: &DatabasePool,
+        provider_name: &str,
+        code: &str,
+    ) -> Result<AuthResponse> {
+        let oauth2_manager = self.oauth2_manager.read().await;
+        let provider = oauth2_manager.get_provider(provider_name)
+            .ok_or_else(|| anyhow::anyhow!("OAuth2 provider {} not found", provider_name))?;
+
+        // Exchange code for token
+        let token_result = provider.exchange_code_for_token(code).await?;
+        let access_token = token_result.get("access_token")
+            .ok_or_else(|| anyhow::anyhow!("No access token in response"))?;
+
+        // Get user info from provider
+        let user_info = provider.get_user_info(access_token).await?;
+
+        // Check if user already exists by email or provider ID
+        let mut user = if let Some(existing_user) = db_pool.get_user_by_email(&user_info.email).await? {
+            existing_user
+        } else {
+            // Create new user if doesn't exist
+            let new_user = NewUser {
+                username: user_info.name.clone(),
+                email: user_info.email.clone(),
+                password: "oauth2_user".to_string(), // Placeholder for OAuth2 users
+                role: "user".to_string(),
+            };
+            db_pool.create_user(&new_user).await?
+        };
+
+        // Update user with OAuth2 provider info if needed
+        // In a real app, you might want to store provider-specific data
+
+        // Generate JWT tokens
+        let token = self.jwt_utils.generate_token(user.id.to_string(), user.role.clone())?;
+        let refresh_token = self.jwt_utils.generate_refresh_token(user.id.to_string(), user.role.clone())?;
+
+        // Store session
+        let mut sessions = self.active_sessions.write().await;
+        sessions.insert(user.id.to_string(), token.clone());
+
+        Ok(AuthResponse {
+            success: true,
+            token: Some(token),
+            refresh_token: Some(refresh_token),
+            user: Some(user),
+            error: None,
+        })
+    }
+
+    pub async fn refresh_token(
+        &self,
+        refresh_token: &str,
+    ) -> Result<AuthResponse> {
+        // Validate refresh token
+        let claims = self.jwt_utils.validate_token(refresh_token)?;
+        
+        // Generate new access token
+        let new_token = self.jwt_utils.generate_token(claims.sub.clone(), claims.role.clone())?;
+        
+        // In a real application, you might want to generate a new refresh token as well
+        // and possibly invalidate the old one
+        
+        Ok(AuthResponse {
+            success: true,
+            token: Some(new_token),
+            refresh_token: Some(refresh_token.to_string()), // Return same refresh token for now
+            user: None, // User info not needed in refresh response
+            error: None,
+        })
+    }
+
     pub async fn validate_token(&self, token: &str) -> Result<TokenClaims> {
         self.jwt_utils.validate_token(token)
     }
@@ -87,21 +168,14 @@ impl AuthService {
         let password_hash = hash_password(password)?;
         
         // Create new user
-        let new_user = crate::models::NewUser {
+        let new_user = NewUser {
             username: username.to_string(),
             email: email.to_string(),
-            password: password_hash.clone(), // This is actually the hash
+            password: password_hash,
             role: role.unwrap_or("user").to_string(),
         };
         
-        // We need to work around the password field in NewUser
-        // In a real implementation, we'd separate the password hash from the password
-        let user = db_pool.create_user(&crate::models::NewUser {
-            username: username.to_string(),
-            email: email.to_string(),
-            password: "dummy".to_string(), // This will be replaced in the database function
-            role: role.unwrap_or("user").to_string(),
-        }).await?;
+        let user = db_pool.create_user(&new_user).await?;
         
         Ok(AuthResponse {
             success: true,
@@ -120,5 +194,10 @@ impl AuthService {
 
     pub async fn is_token_valid(&self, token: &str) -> bool {
         self.jwt_utils.validate_token(token).is_ok()
+    }
+
+    pub async fn add_oauth2_provider(&self, name: String, provider: OAuth2Provider) {
+        let mut oauth2_manager = self.oauth2_manager.write().await;
+        oauth2_manager.add_provider(name, provider);
     }
 }
