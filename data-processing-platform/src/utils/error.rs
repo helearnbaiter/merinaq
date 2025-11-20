@@ -86,6 +86,8 @@ pub struct ErrorResponse {
     pub error: ErrorDetails,
     pub timestamp: String,
     pub request_id: Option<String>,
+    pub path: Option<String>,
+    pub method: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -98,40 +100,40 @@ pub struct ErrorDetails {
 // Implementation to convert PlatformError to HTTP Response
 impl IntoResponse for PlatformError {
     fn into_response(self) -> Response {
-        let (status, error_code, message) = match self {
+        let (status, error_code, message) = match &self {
             PlatformError::AuthenticationError(msg) => {
-                (StatusCode::UNAUTHORIZED, "AUTH_001".to_string(), msg)
+                (StatusCode::UNAUTHORIZED, "AUTH_001".to_string(), msg.clone())
             }
             PlatformError::AuthorizationError(msg) => {
-                (StatusCode::FORBIDDEN, "AUTH_002".to_string(), msg)
+                (StatusCode::FORBIDDEN, "AUTH_002".to_string(), msg.clone())
             }
             PlatformError::ValidationError(msg) => {
-                (StatusCode::BAD_REQUEST, "VALIDATION_001".to_string(), msg)
+                (StatusCode::BAD_REQUEST, "VALIDATION_001".to_string(), msg.clone())
             }
             PlatformError::DatabaseError(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "DB_001".to_string(), 
                  "Database error occurred".to_string())
             }
             PlatformError::QueryError(msg) => {
-                (StatusCode::BAD_REQUEST, "QUERY_001".to_string(), msg)
+                (StatusCode::BAD_REQUEST, "QUERY_001".to_string(), msg.clone())
             }
             PlatformError::NetworkError(msg) => {
-                (StatusCode::BAD_GATEWAY, "NETWORK_001".to_string(), msg)
+                (StatusCode::BAD_GATEWAY, "NETWORK_001".to_string(), msg.clone())
             }
             PlatformError::ConfigError(msg) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "CONFIG_001".to_string(), msg)
+                (StatusCode::INTERNAL_SERVER_ERROR, "CONFIG_001".to_string(), msg.clone())
             }
             PlatformError::InternalError(msg) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_001".to_string(), msg)
+                (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_001".to_string(), msg.clone())
             }
             PlatformError::NotFound(msg) => {
-                (StatusCode::NOT_FOUND, "NOT_FOUND_001".to_string(), msg)
+                (StatusCode::NOT_FOUND, "NOT_FOUND_001".to_string(), msg.clone())
             }
             PlatformError::DataSourceError(msg) => {
-                (StatusCode::BAD_REQUEST, "DATASOURCE_001".to_string(), msg)
+                (StatusCode::BAD_REQUEST, "DATASOURCE_001".to_string(), msg.clone())
             }
             PlatformError::ConnectionPoolError(msg) => {
-                (StatusCode::SERVICE_UNAVAILABLE, "POOL_001".to_string(), msg)
+                (StatusCode::SERVICE_UNAVAILABLE, "POOL_001".to_string(), msg.clone())
             }
             PlatformError::SerializationError(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "SERIALIZATION_001".to_string(), 
@@ -150,7 +152,7 @@ impl IntoResponse for PlatformError {
                  "Invalid or expired token".to_string())
             }
             PlatformError::OAuth2Error(msg) => {
-                (StatusCode::UNAUTHORIZED, "OAUTH2_001".to_string(), msg)
+                (StatusCode::UNAUTHORIZED, "OAUTH2_001".to_string(), msg.clone())
             }
             PlatformError::CasbinError(_) => {
                 (StatusCode::FORBIDDEN, "CASBIN_001".to_string(), 
@@ -165,10 +167,10 @@ impl IntoResponse for PlatformError {
                  "Invalid URL format".to_string())
             }
             PlatformError::FlightError(msg) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "FLIGHT_001".to_string(), msg)
+                (StatusCode::INTERNAL_SERVER_ERROR, "FLIGHT_001".to_string(), msg.clone())
             }
             PlatformError::AdbcError(msg) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "ADBC_001".to_string(), msg)
+                (StatusCode::INTERNAL_SERVER_ERROR, "ADBC_001".to_string(), msg.clone())
             }
         };
 
@@ -177,10 +179,15 @@ impl IntoResponse for PlatformError {
             error: ErrorDetails {
                 code: error_code,
                 message,
-                details: None, // In a real implementation, you might include more details
+                details: Some(serde_json::json!({
+                    "error_type": std::mem::discriminant(self).as_std(),
+                    "full_error": format!("{}", self)
+                })),
             },
             timestamp: chrono::Utc::now().to_rfc3339(),
             request_id: None, // Would be populated from request context
+            path: None,       // Would be populated from request context
+            method: None,     // Would be populated from request context
         };
 
         (status, Json(error_response)).into_response()
@@ -330,6 +337,8 @@ pub struct ErrorResponseBuilder {
     details: Option<serde_json::Value>,
     timestamp: String,
     request_id: Option<String>,
+    path: Option<String>,
+    method: Option<String>,
 }
 
 impl ErrorResponseBuilder {
@@ -341,6 +350,8 @@ impl ErrorResponseBuilder {
             details: None,
             timestamp: chrono::Utc::now().to_rfc3339(),
             request_id: None,
+            path: None,
+            method: None,
         }
     }
 
@@ -364,6 +375,16 @@ impl ErrorResponseBuilder {
         self
     }
 
+    pub fn path<S: Into<String>>(mut self, path: S) -> Self {
+        self.path = Some(path.into());
+        self
+    }
+
+    pub fn method<S: Into<String>>(mut self, method: S) -> Self {
+        self.method = Some(method.into());
+        self
+    }
+
     pub fn build(self) -> ErrorResponse {
         ErrorResponse {
             success: self.success,
@@ -374,6 +395,8 @@ impl ErrorResponseBuilder {
             },
             timestamp: self.timestamp,
             request_id: self.request_id,
+            path: self.path,
+            method: self.method,
         }
     }
 }
@@ -381,5 +404,123 @@ impl ErrorResponseBuilder {
 impl Default for ErrorResponseBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// Error handling middleware
+pub async fn error_handling_middleware<B>(
+    request: axum::http::Request<B>,
+    next: axum::middleware::Next<B>,
+) -> Result<impl axum::response::IntoResponse, PlatformError> {
+    // Get request information
+    let path = request.uri().path().to_string();
+    let method = request.method().clone();
+    
+    match next.run(request).await {
+        Ok(response) => Ok(response),
+        Err(err) => {
+            // Log the error
+            log_error(&err, None); // In a real implementation, you'd extract request ID
+            
+            // Create an error response with request context
+            let error_response = ErrorResponseBuilder::new()
+                .code("INTERNAL_001")
+                .message("Internal server error occurred".to_string())
+                .path(path)
+                .method(method.to_string())
+                .details(serde_json::json!({
+                    "error": format!("{}", err),
+                    "error_type": std::mem::discriminant(&err).as_std(),
+                }))
+                .build();
+                
+            Err(err)
+        }
+    }
+}
+
+// Standardized error response utilities
+pub mod response {
+    use super::*;
+    
+    /// Create a standard error response with specific status code
+    pub fn create_error_response(
+        status: StatusCode,
+        code: &str,
+        message: &str,
+        details: Option<serde_json::Value>,
+    ) -> (StatusCode, Json<ErrorResponse>) {
+        let error_response = ErrorResponse {
+            success: false,
+            error: ErrorDetails {
+                code: code.to_string(),
+                message: message.to_string(),
+                details,
+            },
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            request_id: None,
+            path: None,
+            method: None,
+        };
+        
+        (status, Json(error_response))
+    }
+    
+    /// Create a validation error response
+    pub fn validation_error(
+        field: &str,
+        message: &str,
+        value: Option<&str>,
+    ) -> (StatusCode, Json<ErrorResponse>) {
+        create_error_response(
+            StatusCode::BAD_REQUEST,
+            "VALIDATION_001",
+            &format!("Validation failed for field '{}': {}", field, message),
+            Some(serde_json::json!({
+                "field": field,
+                "value": value,
+                "validation_message": message,
+            })),
+        )
+    }
+    
+    /// Create a not found error response
+    pub fn not_found(
+        resource_type: &str,
+        identifier: &str,
+    ) -> (StatusCode, Json<ErrorResponse>) {
+        create_error_response(
+            StatusCode::NOT_FOUND,
+            "NOT_FOUND_001",
+            &format!("{} with identifier '{}' not found", resource_type, identifier),
+            Some(serde_json::json!({
+                "resource_type": resource_type,
+                "identifier": identifier,
+            })),
+        )
+    }
+    
+    /// Create an unauthorized error response
+    pub fn unauthorized(
+        message: &str,
+    ) -> (StatusCode, Json<ErrorResponse>) {
+        create_error_response(
+            StatusCode::UNAUTHORIZED,
+            "AUTH_001",
+            message,
+            None,
+        )
+    }
+    
+    /// Create a forbidden error response
+    pub fn forbidden(
+        message: &str,
+    ) -> (StatusCode, Json<ErrorResponse>) {
+        create_error_response(
+            StatusCode::FORBIDDEN,
+            "AUTH_002",
+            message,
+            None,
+        )
     }
 }

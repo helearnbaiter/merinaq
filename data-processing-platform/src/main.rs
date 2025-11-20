@@ -12,6 +12,8 @@ mod handlers;
 mod auth;
 mod query_engine;
 mod utils;
+mod routes;
+mod api_version;
 
 use axum::{
     extract::Extension,
@@ -66,63 +68,23 @@ async fn main() -> PlatformResult<()> {
     let query_service = Arc::new(QueryService::new(db_pool.clone()));
     info!("Query service initialized");
 
-    // Build application with shared state
-    let app = Router::new()
-        // Health check endpoint
-        .route("/health", get(handlers::health::health_check))
-        
-        // Authentication routes
-        .route("/api/v1/auth/login", post(handlers::auth::login))
-        .route("/api/v1/auth/refresh", post(handlers::auth::refresh_token))
-        .route("/api/v1/auth/logout", post(handlers::auth::logout))
-        
-        // User management routes
-        .route("/api/v1/users", get(handlers::user::get_users))
-        .route("/api/v1/users", post(handlers::user::create_user))
-        .route("/api/v1/users/:id", get(handlers::user::get_user))
-        .route("/api/v1/users/:id", put(handlers::user::update_user))
-        .route("/api/v1/users/:id", delete(handlers::user::delete_user))
-        
-        // Data source management routes
-        .route("/api/v1/data-sources", get(handlers::data_source::get_data_sources))
-        .route("/api/v1/data-sources", post(handlers::data_source::create_data_source))
-        .route("/api/v1/data-sources/:id", get(handlers::data_source::get_data_source))
-        .route("/api/v1/data-sources/:id", put(handlers::data_source::update_data_source))
-        .route("/api/v1/data-sources/:id", delete(handlers::data_source::delete_data_source))
-        .route("/api/v1/data-sources/:id/test", post(handlers::data_source::test_connection))
-        
-        // Query execution routes
-        .route("/api/v1/query", post(handlers::query::execute_query))
-        .route("/api/v1/query/execute", post(handlers::query::execute_sql))
-        .route("/api/v1/query/schema", get(handlers::query::get_schema))
-        
-        // Permission management routes
-        .route("/api/v1/policies", get(handlers::policy::get_policies))
-        .route("/api/v1/policies", post(handlers::policy::create_policy))
-        .route("/api/v1/policies/:id", delete(handlers::policy::delete_policy))
-        .route("/api/v1/policies/check", post(handlers::policy::check_permission))
-        
-        // BI Tool Integration routes
-        .route("/api/v1/bi/config", get(handlers::bi_integration::get_bi_connection_config))
-        .route("/api/v1/bi/query", post(handlers::bi_integration::execute_bi_query))
-        .route("/api/v1/bi/flight-info", get(handlers::bi_integration::get_flight_sql_info))
-        .route("/api/v1/bi/superset-config", get(handlers::bi_integration::get_superset_config))
-        .route("/api/v1/bi/schema", get(handlers::bi_integration::get_bi_schema))
-        .route("/api/v1/bi/connection-test", get(handlers::bi_integration::test_bi_connection))
-        
-        // Apply middleware
-        .layer(from_fn(middleware::auth::auth_middleware))
-        .layer(
-            CorsLayer::new()
-                .allow_origin(AllowOrigin::any())
-                .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
-                .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
-        )
-        // Add shared state
-        .layer(Extension(db_pool))
-        .layer(Extension(casbin_enforcer))
-        .layer(Extension(auth_service))
-        .layer(Extension(query_service));
+    // Build application with shared state using modular routing
+    let app = api_version::create_api_router(
+        db_pool,
+        casbin_enforcer,
+        Arc::new(tokio::sync::RwLock::new(auth_service)),
+        query_service,
+    )
+    // Add health check at the root level
+    .route("/health", get(handlers::health::health_check))
+    // Apply middleware
+    .layer(from_fn(middleware::auth::auth_middleware))
+    .layer(
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::any())
+            .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+            .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
+    );
 
     // Run server
     let listener = tokio::net::TcpListener::bind(&format!("{}:{}", config.server.host, config.server.port))
