@@ -1,93 +1,45 @@
-```rust
+```
 # Compiled and build artifacts
+target/
 *.o
 *.obj
 *.a
 *.so
 *.dll
 *.exe
-*.pyc
-__pycache__/
-*.class
+*.out
 
 # Dependencies
-node_modules/
-venv/
-.venv/
+Cargo.lock
+**/vendor/
+**/target/
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+# Environment
 .env
 .env.local
 *.env.*
-
-# Build directories
-target/
-build/
-dist/
-out/
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-.venv/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-.git/modules/
-*.sublime-workspace
-
-# Rust
-Cargo.lock
-target/
 
 # Editors
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
 
-# System
-.DS_Store
-Thumbs.db
-
-# Testing
-.coverage
+# Coverage
+coverage/
 htmlcov/
-.pytest_cache/
-.mypy_cache/
+.coverage
 
-# Compression
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-*.lz4
-*.lzh
-*.cab
-*.arj
-*.rpm
-*.deb
-*.Z
-*.lz
-*.lzo
-*.tar.gz
-*.tar.bz2
-*.tar.xz
-*.tar.zst
+# Rust-specific
+**/Cargo.lock
+**/target/
+**/vendor/
+**/rust-toolchain.toml
+**/.clippy.toml
+**/.rustfmt.toml
 ```
