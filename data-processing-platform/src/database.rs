@@ -2,17 +2,21 @@
 //! 
 //! Handles database connections, migrations, and connection pooling
 
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use anyhow::Result;
 use tracing::info;
+use crate::config::DatabaseSettings;
 
 pub struct DatabasePool {
     pub pool: PgPool,
 }
 
 impl DatabasePool {
-    pub async fn new(database_url: &str) -> Result<Self> {
-        let pool = PgPool::connect(database_url).await?;
+    pub async fn new(config: &DatabaseSettings) -> Result<Self> {
+        let pool = PgPoolOptions::new()
+            .max_connections(config.pool_size)
+            .connect(&config.get_database_url())
+            .await?;
         
         // Run migrations
         Self::run_migrations(&pool).await?;

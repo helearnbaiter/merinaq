@@ -3,101 +3,178 @@
 //! Handles loading and managing application configuration from various sources
 
 use anyhow::Result;
+use config::{Config, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
 use std::env;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    pub app_name: String,
-    pub server_host: String,
-    pub server_port: u16,
-    pub database_url: String,
-    pub jwt_secret: String,
-    pub jwt_expiration: i64, // in seconds
-    pub casbin_model_path: String,
-    pub casbin_policy_path: String,
-    pub oauth2_client_id: String,
-    pub oauth2_client_secret: String,
-    pub oauth2_redirect_url: String,
-    pub max_connections: u32,
-    pub min_connections: u32,
-    pub connection_timeout: u64,
-}
-
-impl AppConfig {
-    pub async fn from_env() -> Result<Self> {
-        Ok(AppConfig {
-            app_name: env::var("APP_NAME").unwrap_or_else(|_| "Data Processing Platform".to_string()),
-            server_host: env::var("SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
-            server_port: env::var("SERVER_PORT")
-                .unwrap_or_else(|_| "8080".to_string())
-                .parse()
-                .unwrap_or(8080),
-            database_url: env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "postgresql://user:password@localhost/data_platform".to_string()),
-            jwt_secret: env::var("JWT_SECRET")
-                .unwrap_or_else(|_| "default_secret_key_for_development".to_string()),
-            jwt_expiration: env::var("JWT_EXPIRATION")
-                .unwrap_or_else(|_| "3600".to_string()) // 1 hour
-                .parse()
-                .unwrap_or(3600),
-            casbin_model_path: env::var("CASBIN_MODEL_PATH")
-                .unwrap_or_else(|_| "config/rbac_model.conf".to_string()),
-            casbin_policy_path: env::var("CASBIN_POLICY_PATH")
-                .unwrap_or_else(|_| "config/policy.csv".to_string()),
-            oauth2_client_id: env::var("OAUTH2_CLIENT_ID").unwrap_or_default(),
-            oauth2_client_secret: env::var("OAUTH2_CLIENT_SECRET").unwrap_or_default(),
-            oauth2_redirect_url: env::var("OAUTH2_REDIRECT_URL")
-                .unwrap_or_else(|_| "http://localhost:8080/auth/callback".to_string()),
-            max_connections: env::var("DB_MAX_CONNECTIONS")
-                .unwrap_or_else(|_| "20".to_string())
-                .parse()
-                .unwrap_or(20),
-            min_connections: env::var("DB_MIN_CONNECTIONS")
-                .unwrap_or_else(|_| "5".to_string())
-                .parse()
-                .unwrap_or(5),
-            connection_timeout: env::var("DB_CONNECTION_TIMEOUT")
-                .unwrap_or_else(|_| "30".to_string())
-                .parse()
-                .unwrap_or(30),
-        })
-    }
+    pub app: AppSettings,
+    pub server: ServerSettings,
+    pub database: DatabaseSettings,
+    pub auth: AuthSettings,
+    pub query_engine: QueryEngineSettings,
+    pub logging: LoggingSettings,
+    pub monitoring: MonitoringSettings,
+    pub security: SecuritySettings,
+    #[serde(default)]
+    pub performance: Option<PerformanceSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DatabaseConfig {
-    pub url: String,
-    pub max_connections: u32,
-    pub min_connections: u32,
-    pub connect_timeout: u64,
-    pub idle_timeout: Option<u64>,
-    pub statement_timeout: Option<u64>,
+pub struct AppSettings {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    #[serde(default = "default_debug")]
+    pub debug: bool,
+    #[serde(default = "default_log_level")]
+    pub log_level: String,
 }
 
-impl DatabaseConfig {
-    pub fn from_env() -> Self {
-        DatabaseConfig {
-            url: env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "postgresql://user:password@localhost/data_platform".to_string()),
-            max_connections: env::var("DB_MAX_CONNECTIONS")
-                .unwrap_or_else(|_| "20".to_string())
-                .parse()
-                .unwrap_or(20),
-            min_connections: env::var("DB_MIN_CONNECTIONS")
-                .unwrap_or_else(|_| "5".to_string())
-                .parse()
-                .unwrap_or(5),
-            connect_timeout: env::var("DB_CONNECTION_TIMEOUT")
-                .unwrap_or_else(|_| "30".to_string())
-                .parse()
-                .unwrap_or(30),
-            idle_timeout: env::var("DB_IDLE_TIMEOUT")
-                .ok()
-                .and_then(|v| v.parse().ok()),
-            statement_timeout: env::var("DB_STATEMENT_TIMEOUT")
-                .ok()
-                .and_then(|v| v.parse().ok()),
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerSettings {
+    pub host: String,
+    pub port: u16,
+    #[serde(default = "default_timeout")]
+    pub timeout: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatabaseSettings {
+    pub url: String,
+    pub pool_size: u32,
+    #[serde(default = "default_connection_timeout")]
+    pub connection_timeout: u64,
+    #[serde(default)]
+    pub max_connections: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthSettings {
+    pub jwt_secret: String,
+    #[serde(default = "default_jwt_expiration")]
+    pub jwt_expiration: u64, // in seconds
+    #[serde(default = "default_refresh_token_expiration")]
+    pub refresh_token_expiration: u64, // in seconds
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryEngineSettings {
+    #[serde(default = "default_max_concurrent_queries")]
+    pub max_concurrent_queries: u32,
+    #[serde(default = "default_query_timeout")]
+    pub query_timeout: u64, // in seconds
+    #[serde(default = "default_result_cache_ttl")]
+    pub result_cache_ttl: u64, // in seconds
+    #[serde(default = "default_memory_limit")]
+    pub memory_limit: String,
+    #[serde(default = "default_false")]
+    pub enable_query_cache: bool,
+    #[serde(default = "default_false")]
+    pub enable_query_optimization: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoggingSettings {
+    #[serde(default = "default_log_level")]
+    pub level: String,
+    #[serde(default = "default_log_format")]
+    pub format: String,
+    pub file_path: String,
+    #[serde(default = "default_false")]
+    pub enable_syslog: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitoringSettings {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_metrics_endpoint")]
+    pub metrics_endpoint: String,
+    #[serde(default = "default_false")]
+    pub tracing_enabled: bool,
+    #[serde(default)]
+    pub tracing_endpoint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecuritySettings {
+    #[serde(default = "default_true")]
+    pub enable_cors: bool,
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    #[serde(default = "default_true")]
+    pub enable_rate_limiting: bool,
+    #[serde(default = "default_rate_limit_requests")]
+    pub rate_limit_requests: u32,
+    #[serde(default = "default_rate_limit_window")]
+    pub rate_limit_window: u64, // in seconds
+    #[serde(default = "default_false")]
+    pub enable_request_logging: bool,
+    #[serde(default = "default_false")]
+    pub ssl_required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerformanceSettings {
+    #[serde(default = "default_true")]
+    pub connection_pool_monitoring: bool,
+    #[serde(default = "default_true")]
+    pub query_performance_monitoring: bool,
+    #[serde(default = "default_slow_query_threshold")]
+    pub slow_query_threshold: u64, // in milliseconds
+}
+
+// Default functions for optional fields
+fn default_debug() -> bool { false }
+fn default_log_level() -> String { "INFO".to_string() }
+fn default_timeout() -> u64 { 30 }
+fn default_connection_timeout() -> u64 { 30 }
+fn default_jwt_expiration() -> u64 { 3600 } // 1 hour
+fn default_refresh_token_expiration() -> u64 { 86400 } // 24 hours
+fn default_max_concurrent_queries() -> u32 { 100 }
+fn default_query_timeout() -> u64 { 300 } // 5 minutes
+fn default_result_cache_ttl() -> u64 { 300 } // 5 minutes
+fn default_memory_limit() -> String { "1GB".to_string() }
+fn default_log_format() -> String { "json".to_string() }
+fn default_metrics_endpoint() -> String { "/metrics".to_string() }
+fn default_rate_limit_requests() -> u32 { 100 }
+fn default_rate_limit_window() -> u64 { 60 } // 60 seconds
+fn default_slow_query_threshold() -> u64 { 5000 } // 5 seconds
+fn default_true() -> bool { true }
+fn default_false() -> bool { false }
+
+impl AppConfig {
+    pub fn from_env() -> Result<Self, ConfigError> {
+        let environment = env::var("RUN_MODE").unwrap_or_else(|_| "development".to_string());
+        
+        let mut config_builder = Config::builder()
+            // Start with the base configuration
+            .add_source(File::with_name("config/base"))
+            // Add environment-specific configuration
+            .add_source(File::with_name(&format!("config/{}", environment)).required(false))
+            // Add in settings from the environment (with a prefix of APP)
+            // Eg.. `APP_DEBUG=1` would set the `debug` key
+            .add_source(Environment::with_prefix("APP").separator("__"));
+
+        // Load the configuration
+        let config = config_builder.build()?;
+        let app_config: AppConfig = config.try_deserialize()?;
+
+        Ok(app_config)
+    }
+}
+
+impl DatabaseSettings {
+    pub fn get_database_url(&self) -> String {
+        // Expand environment variables in the URL
+        let url = &self.url;
+        if url.starts_with("${") && url.ends_with("}") {
+            let var_name = &url[2..url.len()-1]; // Extract variable name
+            env::var(var_name).unwrap_or_else(|_| url.clone())
+        } else {
+            url.clone()
         }
     }
 }

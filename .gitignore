@@ -1,29 +1,10 @@
 ```
-# Compiled and build artifacts
-*.o
-*.obj
-*.out
-target/
-
 # Dependencies
-**/node_modules/
-**/venv/
-**/env/
-**/.venv/
-**/__pycache__/
-**/.mypy_cache/
-**/.pytest_cache/
-**/.gradle/
-**/build/
-**/dist/
-**/lib/
-**/deps/
+target/
 
 # Logs and temp files
 *.log
 *.tmp
-*.swp
-*.swo
 
 # Environment
 .env
@@ -33,18 +14,35 @@ target/
 # Editors
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# OS generated files
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
 .DS_Store
 Thumbs.db
 
-# Coverage
-coverage/
-htmlcov/
-.coverage
-
-# Rust specific
+# Rust
 Cargo.lock
+
+# IDE
+.vs/
+*.swp
+*.swo
+*~
 ```
