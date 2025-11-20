@@ -115,7 +115,14 @@ pub async fn execute_bi_query(
     // Execute the query using the query service
     let start_time = std::time::Instant::now();
     
-    let result = query_service.execute_query(&payload.query, &db_pool).await;
+    use crate::models::ExecuteQueryRequest;
+    
+    let request = ExecuteQueryRequest {
+        sql: payload.query.clone(),
+        data_source_id: 1, // Default to first data source - in a real implementation this would come from auth context or request
+    };
+    
+    let result = query_service.execute_query(&request).await;
     
     let execution_time = start_time.elapsed().as_millis() as u64;
     
@@ -123,22 +130,41 @@ pub async fn execute_bi_query(
         Ok(query_result) => {
             // Determine response format
             let format = payload.format.unwrap_or_else(|| "json".to_string());
+            
+            // For Arrow and CSV formats, we need to convert the JSON result back to RecordBatches
             let response = match format.as_str() {
-                "arrow" => create_arrow_response(&query_result)?,
-                "csv" => create_csv_response(&query_result)?,
+                "arrow" => {
+                    // For now, return an error since the conversion is complex and not fully implemented
+                    return Err(PlatformError::NotImplemented("Arrow format conversion not fully implemented".to_string()));
+                },
+                "csv" => {
+                    // For now, return an error since the conversion is complex and not fully implemented
+                    return Err(PlatformError::NotImplemented("CSV format conversion not fully implemented".to_string()));
+                },
                 "json" | _ => {
-                    let json_data = serde_json::to_value(&query_result).map_err(|e| {
-                        PlatformError::QueryError(format!("Failed to serialize query result: {}", e))
-                    })?;
-                    
                     let response = BiQueryResponse {
                         success: true,
-                        data: Some(json_data),
-                        schema: None, // TODO: Add schema extraction
+                        data: query_result.data,
+                        schema: extract_schema_from_json(&query_result.data), // Extract schema from the result data
                         metadata: Some(QueryMetadata {
                             execution_time_ms: execution_time,
-                            row_count: query_result.len(),
-                            column_count: if query_result.is_empty() { 0 } else { query_result[0].num_columns() },
+                            row_count: query_result.data.as_ref().map(|d| match d {
+                                serde_json::Value::Array(arr) => arr.len(),
+                                _ => 0,
+                            }).unwrap_or(0),
+                            column_count: if let Some(serde_json::Value::Array(ref arr)) = query_result.data {
+                                if !arr.is_empty() {
+                                    if let serde_json::Value::Object(ref obj) = arr[0] {
+                                        obj.len()
+                                    } else {
+                                        0
+                                    }
+                                } else {
+                                    0
+                                }
+                            } else {
+                                0
+                            },
                             query_id: uuid::Uuid::new_v4().to_string(),
                         }),
                         error: None,
@@ -211,6 +237,7 @@ fn create_arrow_response(batches: &[RecordBatch]) -> Result<Response, PlatformEr
 /// Create CSV response
 fn create_csv_response(batches: &[RecordBatch]) -> Result<Response, PlatformError> {
     use std::io::Write;
+    use datafusion::arrow::array::*;
     
     let mut buffer: Vec<u8> = Vec::new();
     
@@ -233,9 +260,75 @@ fn create_csv_response(batches: &[RecordBatch]) -> Result<Response, PlatformErro
                         buffer.write_all(b",").unwrap();
                     }
                     
-                    // Convert column value to string representation
-                    let value = arrow::array::ArrayAccessor::value(column.as_ref(), row_idx);
-                    let value_str = format!("{:?}", value);
+                    // Convert column value to string representation based on data type
+                    let value_str = match column.data_type() {
+                        arrow::datatypes::DataType::Int8 => {
+                            let arr = column.as_any().downcast_ref::<Int8Array>().unwrap();
+                            if arr.is_null(row_idx) { "NULL".to_string() } else { arr.value(row_idx).to_string() }
+                        },
+                        arrow::datatypes::DataType::Int16 => {
+                            let arr = column.as_any().downcast_ref::<Int16Array>().unwrap();
+                            if arr.is_null(row_idx) { "NULL".to_string() } else { arr.value(row_idx).to_string() }
+                        },
+                        arrow::datatypes::DataType::Int32 => {
+                            let arr = column.as_any().downcast_ref::<Int32Array>().unwrap();
+                            if arr.is_null(row_idx) { "NULL".to_string() } else { arr.value(row_idx).to_string() }
+                        },
+                        arrow::datatypes::DataType::Int64 => {
+                            let arr = column.as_any().downcast_ref::<Int64Array>().unwrap();
+                            if arr.is_null(row_idx) { "NULL".to_string() } else { arr.value(row_idx).to_string() }
+                        },
+                        arrow::datatypes::DataType::UInt8 => {
+                            let arr = column.as_any().downcast_ref::<UInt8Array>().unwrap();
+                            if arr.is_null(row_idx) { "NULL".to_string() } else { arr.value(row_idx).to_string() }
+                        },
+                        arrow::datatypes::DataType::UInt16 => {
+                            let arr = column.as_any().downcast_ref::<UInt16Array>().unwrap();
+                            if arr.is_null(row_idx) { "NULL".to_string() } else { arr.value(row_idx).to_string() }
+                        },
+                        arrow::datatypes::DataType::UInt32 => {
+                            let arr = column.as_any().downcast_ref::<UInt32Array>().unwrap();
+                            if arr.is_null(row_idx) { "NULL".to_string() } else { arr.value(row_idx).to_string() }
+                        },
+                        arrow::datatypes::DataType::UInt64 => {
+                            let arr = column.as_any().downcast_ref::<UInt64Array>().unwrap();
+                            if arr.is_null(row_idx) { "NULL".to_string() } else { arr.value(row_idx).to_string() }
+                        },
+                        arrow::datatypes::DataType::Float32 => {
+                            let arr = column.as_any().downcast_ref::<Float32Array>().unwrap();
+                            if arr.is_null(row_idx) { "NULL".to_string() } else { arr.value(row_idx).to_string() }
+                        },
+                        arrow::datatypes::DataType::Float64 => {
+                            let arr = column.as_any().downcast_ref::<Float64Array>().unwrap();
+                            if arr.is_null(row_idx) { "NULL".to_string() } else { arr.value(row_idx).to_string() }
+                        },
+                        arrow::datatypes::DataType::Utf8 => {
+                            let arr = column.as_any().downcast_ref::<StringArray>().unwrap();
+                            if arr.is_null(row_idx) { "NULL".to_string() } else { arr.value(row_idx).to_string() }
+                        },
+                        arrow::datatypes::DataType::LargeUtf8 => {
+                            let arr = column.as_any().downcast_ref::<LargeStringArray>().unwrap();
+                            if arr.is_null(row_idx) { "NULL".to_string() } else { arr.value(row_idx).to_string() }
+                        },
+                        arrow::datatypes::DataType::Boolean => {
+                            let arr = column.as_any().downcast_ref::<BooleanArray>().unwrap();
+                            if arr.is_null(row_idx) { "NULL".to_string() } else { 
+                                if arr.value(row_idx) { "true".to_string() } else { "false".to_string() } 
+                            }
+                        },
+                        arrow::datatypes::DataType::Timestamp(_, _) => {
+                            let arr = column.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
+                            if arr.is_null(row_idx) { "NULL".to_string() } else { 
+                                // Convert timestamp to readable format
+                                let ts = chrono::NaiveDateTime::from_timestamp_opt(arr.value(row_idx) / 1_000_000_000, 
+                                    (arr.value(row_idx) % 1_000_000_000) as u32)
+                                    .unwrap_or_default();
+                                ts.format("%Y-%m-%d %H:%M:%S").to_string()
+                            }
+                        },
+                        _ => format!("Unsupported data type: {:?}", column.data_type()),
+                    };
+                    
                     buffer.write_all(value_str.as_bytes()).unwrap();
                 }
                 buffer.write_all(b"\n").unwrap();
@@ -309,27 +402,108 @@ pub async fn get_bi_schema(
         ORDER BY table_schema, table_name, ordinal_position
     ";
     
-    let result = query_service.execute_query(query, &db_pool).await?;
+    let request = ExecuteQueryRequest {
+        sql: query.to_string(),
+        data_source_id: 1, // Default to first data source
+    };
+    
+    let result = query_service.execute_query(&request).await?;
     
     // Convert to JSON format suitable for BI tools
     let schema_info = serde_json::json!({
-        "tables": extract_table_schema(&result)
+        "tables": extract_schema_from_json(&result.data)
     });
     
     Ok(Json(schema_info))
 }
 
+/// Helper function to extract table schema from JSON query results
+fn extract_schema_from_json(data: &Option<serde_json::Value>) -> serde_json::Value {
+    match data {
+        Some(serde_json::Value::Array(rows)) => {
+            let mut schema_map: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+            
+            for row in rows {
+                if let serde_json::Value::Object(obj) = row {
+                    // Extract schema, table, column and type information from the row
+                    if let (Some(serde_json::Value::String(table_schema)), 
+                            Some(serde_json::Value::String(table_name)), 
+                            Some(serde_json::Value::String(column_name)), 
+                            Some(serde_json::Value::String(data_type))) = 
+                        (obj.get("table_schema"), obj.get("table_name"), obj.get("column_name"), obj.get("data_type")) {
+                        
+                        // Create a unique key for the table
+                        let table_key = format!("{}.{}", table_schema, table_name);
+                        
+                        // Get or create the table schema entry
+                        let table_entry = schema_map.entry(table_key.clone()).or_insert_with(|| serde_json::json!({}));
+                        
+                        // Add column information to the table
+                        if let serde_json::Value::Object(ref mut table_obj) = table_entry {
+                            let mut column_info = serde_json::Map::new();
+                            column_info.insert("type".to_string(), serde_json::Value::String(data_type.clone()));
+                            column_info.insert("nullable".to_string(), serde_json::Value::Bool(true)); // This would come from the actual schema query
+                            
+                            table_obj.insert(column_name.clone(), serde_json::Value::Object(column_info));
+                        }
+                    }
+                }
+            }
+            
+            serde_json::json!(schema_map)
+        },
+        _ => serde_json::json!({}),
+    }
+}
+
 /// Helper function to extract table schema from query results
 fn extract_table_schema(batches: &[RecordBatch]) -> serde_json::Value {
-    let mut schema_map: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+    use datafusion::arrow::array::*;
+    use std::collections::HashMap;
+    
+    let mut schema_map: HashMap<String, serde_json::Value> = HashMap::new();
     
     for batch in batches {
-        // Extract table and column information from the batch
-        // This is a simplified implementation - in a real system you'd iterate through the batch rows
-        // and build the schema map based on the query results
-        if !batch.columns().is_empty() {
-            // For now, return an empty object - the actual implementation would parse the batch data
-            // and build a proper schema representation
+        if batch.num_rows() == 0 {
+            continue;
+        }
+        
+        // Get column information
+        let schema = batch.schema();
+        
+        // Process each row in the batch to extract table and column information
+        for row_idx in 0..batch.num_rows() {
+            // Extract values from each column for this row
+            let table_schema_col = batch.column(0);
+            let table_name_col = batch.column(1);
+            let column_name_col = batch.column(2);
+            let data_type_col = batch.column(3);
+            
+            // Get the values (assuming they are string arrays)
+            let table_schema_array = table_schema_col.as_any().downcast_ref::<StringArray>().unwrap();
+            let table_name_array = table_name_col.as_any().downcast_ref::<StringArray>().unwrap();
+            let column_name_array = column_name_col.as_any().downcast_ref::<StringArray>().unwrap();
+            let data_type_array = data_type_col.as_any().downcast_ref::<StringArray>().unwrap();
+            
+            let table_schema = table_schema_array.value(row_idx);
+            let table_name = table_name_array.value(row_idx);
+            let column_name = column_name_array.value(row_idx);
+            let data_type = data_type_array.value(row_idx);
+            
+            // Create a unique key for the table
+            let table_key = format!("{}.{}", table_schema, table_name);
+            
+            // Get or create the table schema entry
+            let table_entry = schema_map.entry(table_key.clone()).or_insert_with(|| serde_json::json!({}));
+            
+            // Add column information to the table
+            if let serde_json::Value::Object(ref mut table_obj) = table_entry {
+                let mut column_info = serde_json::Map::new();
+                column_info.insert("type".to_string(), serde_json::Value::String(data_type.to_string()));
+                column_info.insert("nullable".to_string(), serde_json::Value::Bool(true)); // This would come from the actual schema query
+                
+                table_obj.insert(column_name.to_string(), serde_json::Value::Object(column_info));
+            }
         }
     }
     
