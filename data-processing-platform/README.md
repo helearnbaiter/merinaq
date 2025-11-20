@@ -98,6 +98,14 @@ data-processing-platform/
 - `DELETE /api/v1/policies/{id}` - Delete policy
 - `POST /api/v1/policies/check` - Check permission
 
+### BI Tool Integration
+- `GET /api/v1/bi/config` - Get standard connection configuration for BI tools
+- `POST /api/v1/bi/query` - Execute query for BI tools
+- `GET /api/v1/bi/flight-info` - Get Flight SQL connection information
+- `GET /api/v1/bi/superset-config` - Get Superset connection configuration
+- `GET /api/v1/bi/schema` - Get schema information for BI tools
+- `GET /api/v1/bi/connection-test` - Test BI tool connection
+
 ## Configuration
 
 The application supports multiple environments through a hierarchical configuration system:
