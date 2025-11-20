@@ -1,0 +1,58 @@
+[package]
+name = "data-processing-platform"
+version = "0.1.0"
+edition = "2021"
+authors = ["Data Processing Team"]
+description = "Modern data processing platform built with Rust"
+license = "MIT"
+
+[dependencies]
+# Web framework
+axum = { version = "0.7", features = ["macros"] }
+tokio = { version = "1.0", features = ["full"] }
+tower = { version = "0.4", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors", "fs", "trace"] }
+
+# Configuration
+config = "0.14"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Authentication & Authorization
+casbin = { version = "2.1", features = ["adapter", "database-adapter"] }
+jsonwebtoken = "9.3"
+oauth2 = "0.21"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "mysql", "sqlite", "chrono", "uuid", "json"] }
+sea-orm = { version = "1.0", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros"] }
+
+# Data processing
+datafusion = { version = "40.0", features = ["parquet", "json", "crypto_expressions", "regex_expressions"] }
+arrow = { version = "52.2", features = ["prettyprint"] }
+parquet = "52.2"
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json"] }
+
+# Utilities
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures = "0.3"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+url = "2.0"
+
+# Flight SQL and ADBC
+flight-sql = "0.18"
+adbc = "0.18"
+
+# Cryptography
+bcrypt = "0.15"
+rand = "0.8"
+
+[dev-dependencies]
+tokio-test = "0.4"
