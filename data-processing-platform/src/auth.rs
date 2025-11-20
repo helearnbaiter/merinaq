@@ -8,6 +8,8 @@ use bcrypt::{hash, verify, DEFAULT_COST};
 use anyhow::Result;
 use chrono::Utc;
 use std::collections::HashMap;
+use reqwest::Client;
+use serde_json::Value;
 
 use crate::models::TokenClaims;
 
@@ -15,11 +17,12 @@ use crate::models::TokenClaims;
 pub struct JwtUtils {
     secret: String,
     expiration: i64,
+    refresh_expiration: i64, // For refresh tokens
 }
 
 impl JwtUtils {
-    pub fn new(secret: String, expiration: i64) -> Self {
-        JwtUtils { secret, expiration }
+    pub fn new(secret: String, expiration: i64, refresh_expiration: i64) -> Self {
+        JwtUtils { secret, expiration, refresh_expiration }
     }
 
     pub fn generate_token(&self, user_id: String, role: String) -> Result<String> {
@@ -35,8 +38,22 @@ impl JwtUtils {
         Ok(token)
     }
 
+    pub fn generate_refresh_token(&self, user_id: String, role: String) -> Result<String> {
+        let expiration = Utc::now().timestamp() + self.refresh_expiration;
+        let claims = TokenClaims {
+            sub: user_id,
+            exp: expiration,
+            iat: Utc::now().timestamp(),
+            role,
+        };
+
+        let token = encode(&Header::default(), &claims, &self.secret.as_ref().into())?;
+        Ok(token)
+    }
+
     pub fn validate_token(&self, token: &str) -> Result<TokenClaims> {
-        let validation = Validation::default();
+        let mut validation = Validation::default();
+        validation.validate_exp = true;
         let token_data = decode::<TokenClaims>(token, &self.secret.as_ref().into(), &validation)?;
         Ok(token_data.claims)
     }
@@ -59,6 +76,7 @@ pub struct OAuth2Config {
     pub redirect_url: String,
     pub auth_url: String,
     pub token_url: String,
+    pub user_info_url: String,
 }
 
 impl OAuth2Config {
@@ -68,6 +86,7 @@ impl OAuth2Config {
         redirect_url: String,
         auth_url: String,
         token_url: String,
+        user_info_url: String,
     ) -> Self {
         OAuth2Config {
             client_id,
@@ -75,36 +94,119 @@ impl OAuth2Config {
             redirect_url,
             auth_url,
             token_url,
+            user_info_url,
         }
     }
 }
 
-// Mock OAuth2 provider for demonstration
 #[derive(Debug, Clone)]
 pub struct OAuth2Provider {
     pub name: String,
     pub config: OAuth2Config,
+    pub client: Client,
 }
 
 impl OAuth2Provider {
     pub fn new(name: String, config: OAuth2Config) -> Self {
-        OAuth2Provider { name, config }
+        OAuth2Provider { 
+            name, 
+            config, 
+            client: Client::new(),
+        }
     }
 
-    pub async fn get_authorization_url(&self, state: &str) -> String {
+    pub async fn get_authorization_url(&self, state: &str, scopes: Option<&[&str]>) -> String {
+        let scope_str = if let Some(scopes) = scopes {
+            format!("&scope={}", scopes.join("+"))
+        } else {
+            "".to_string()
+        };
+        
         format!(
-            "{}?client_id={}&redirect_uri={}&response_type=code&state={}",
-            self.config.auth_url, self.config.client_id, self.config.redirect_url, state
+            "{}?client_id={}&redirect_uri={}&response_type=code&state={}{}",
+            self.config.auth_url, 
+            self.config.client_id, 
+            self.config.redirect_url, 
+            state,
+            scope_str
         )
     }
 
     pub async fn exchange_code_for_token(&self, code: &str) -> Result<HashMap<String, String>> {
-        // This is a simplified implementation
-        // In a real application, you would make an HTTP request to the token endpoint
-        let mut response = HashMap::new();
-        response.insert("access_token".to_string(), "mock_access_token".to_string());
-        response.insert("refresh_token".to_string(), "mock_refresh_token".to_string());
-        response.insert("expires_in".to_string(), "3600".to_string());
-        Ok(response)
+        let params = [
+            ("grant_type", "authorization_code"),
+            ("client_id", &self.config.client_id),
+            ("client_secret", &self.config.client_secret),
+            ("code", code),
+            ("redirect_uri", &self.config.redirect_url),
+        ];
+
+        let response = self.client
+            .post(&self.config.token_url)
+            .form(&params)
+            .send()
+            .await?;
+
+        let response_text = response.text().await?;
+        let token_response: Value = serde_json::from_str(&response_text)?;
+
+        let mut result = HashMap::new();
+        if let Some(access_token) = token_response.get("access_token").and_then(|v| v.as_str()) {
+            result.insert("access_token".to_string(), access_token.to_string());
+        }
+        if let Some(refresh_token) = token_response.get("refresh_token").and_then(|v| v.as_str()) {
+            result.insert("refresh_token".to_string(), refresh_token.to_string());
+        }
+        if let Some(expires_in) = token_response.get("expires_in").and_then(|v| v.as_i64()) {
+            result.insert("expires_in".to_string(), expires_in.to_string());
+        }
+
+        Ok(result)
+    }
+
+    pub async fn get_user_info(&self, access_token: &str) -> Result<UserInfo> {
+        let response = self.client
+            .get(&self.config.user_info_url)
+            .header("Authorization", format!("Bearer {}", access_token))
+            .send()
+            .await?;
+
+        let user_data: Value = response.json().await?;
+        
+        Ok(UserInfo {
+            id: user_data.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            email: user_data.get("email").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            name: user_data.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            provider: self.name.clone(),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct UserInfo {
+    pub id: String,
+    pub email: String,
+    pub name: String,
+    pub provider: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct OAuth2Manager {
+    pub providers: HashMap<String, OAuth2Provider>,
+}
+
+impl OAuth2Manager {
+    pub fn new() -> Self {
+        OAuth2Manager {
+            providers: HashMap::new(),
+        }
+    }
+
+    pub fn add_provider(&mut self, name: String, provider: OAuth2Provider) {
+        self.providers.insert(name, provider);
+    }
+
+    pub fn get_provider(&self, name: &str) -> Option<&OAuth2Provider> {
+        self.providers.get(name)
     }
 }

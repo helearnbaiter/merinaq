@@ -38,6 +38,67 @@ use crate::{
     utils::error::{PlatformError, PlatformResult},
 };
 
+/// Initialize OAuth2 providers
+async fn initialize_oauth2_providers(
+    auth_service: &Arc<tokio::sync::RwLock<AuthService>>,
+    config: &AppConfig,
+) -> PlatformResult<()> {
+    use crate::auth::{OAuth2Config, OAuth2Provider};
+    
+    // Initialize Google OAuth2 provider if configured
+    if let Some(ref google_config) = config.auth.google {
+        let google_provider = OAuth2Provider::new(
+            "google".to_string(),
+            OAuth2Config::new(
+                google_config.client_id.clone(),
+                google_config.client_secret.clone(),
+                format!("{}/auth/oauth2/google/callback", config.server.get_base_url()),
+                "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
+                "https://oauth2.googleapis.com/token".to_string(),
+                "https://www.googleapis.com/oauth2/v2/userinfo".to_string(),
+            )
+        );
+        auth_service.add_oauth2_provider("google".to_string(), google_provider).await;
+        info!("Google OAuth2 provider initialized");
+    }
+    
+    // Initialize GitHub OAuth2 provider if configured
+    if let Some(ref github_config) = config.auth.github {
+        let github_provider = OAuth2Provider::new(
+            "github".to_string(),
+            OAuth2Config::new(
+                github_config.client_id.clone(),
+                github_config.client_secret.clone(),
+                format!("{}/auth/oauth2/github/callback", config.server.get_base_url()),
+                "https://github.com/login/oauth/authorize".to_string(),
+                "https://github.com/login/oauth/access_token".to_string(),
+                "https://api.github.com/user".to_string(),
+            )
+        );
+        auth_service.add_oauth2_provider("github".to_string(), github_provider).await;
+        info!("GitHub OAuth2 provider initialized");
+    }
+    
+    // Initialize Facebook OAuth2 provider if configured
+    if let Some(ref facebook_config) = config.auth.facebook {
+        let facebook_provider = OAuth2Provider::new(
+            "facebook".to_string(),
+            OAuth2Config::new(
+                facebook_config.client_id.clone(),
+                facebook_config.client_secret.clone(),
+                format!("{}/auth/oauth2/facebook/callback", config.server.get_base_url()),
+                "https://www.facebook.com/v18.0/dialog/oauth".to_string(),
+                "https://graph.facebook.com/v18.0/oauth/access_token".to_string(),
+                "https://graph.facebook.com/me?fields=id,name,email".to_string(),
+            )
+        );
+        auth_service.add_oauth2_provider("facebook".to_string(), facebook_provider).await;
+        info!("Facebook OAuth2 provider initialized");
+    }
+    
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> PlatformResult<()> {
     // Initialize logging
@@ -61,8 +122,12 @@ async fn main() -> PlatformResult<()> {
     info!("Casbin service initialized");
 
     // Initialize Auth service
-    let auth_service = AuthService::new(&config.auth);
+    let auth_service = Arc::new(tokio::sync::RwLock::new(AuthService::new(&config.auth)));
     info!("Auth service initialized");
+    
+    // Initialize OAuth2 providers
+    initialize_oauth2_providers(&auth_service, &config).await?;
+    info!("OAuth2 providers initialized");
 
     // Initialize Query service
     let query_service = Arc::new(QueryService::new(db_pool.clone()));
