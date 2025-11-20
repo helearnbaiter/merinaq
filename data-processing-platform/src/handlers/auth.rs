@@ -4,7 +4,7 @@
 
 use axum::{
     extract::{Extension, Json, Path, Query},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     extract::State,
 };
@@ -44,17 +44,20 @@ pub async fn oauth2_authorize(
 ) -> impl IntoResponse {
     use crate::auth::{OAuth2Manager, OAuth2Provider};
     
-    let state = params.get("state").unwrap_or(&"default_state".to_string());
     let scopes_param = params.get("scopes").map(|s| s.split(',').collect::<Vec<_>>());
+    let redirect_uri = params.get("redirect_uri").cloned();
+    
+    // Generate a new state parameter for CSRF protection
+    let state = auth_service.read().await.generate_oauth2_state(redirect_uri).await;
     
     let auth_service_read = auth_service.read().await;
     let oauth2_manager = auth_service_read.oauth2_manager.read().await;
     
     if let Some(provider) = oauth2_manager.get_provider(&provider_name) {
         let auth_url = if let Some(ref scopes) = scopes_param {
-            provider.get_authorization_url(state, Some(scopes))
+            provider.get_authorization_url(&state, Some(scopes))
         } else {
-            provider.get_authorization_url(state, None)
+            provider.get_authorization_url(&state, None)
         };
         
         (StatusCode::OK, Json(ApiResponse::success(auth_url)))
@@ -69,6 +72,16 @@ pub async fn oauth2_callback(
     Path(provider_name): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
+    // Validate the state parameter to prevent CSRF attacks
+    if let Some(state) = params.get("state") {
+        let state_result = auth_service.read().await.validate_oauth2_state(state).await;
+        if state_result.is_none() {
+            return (StatusCode::BAD_REQUEST, Json(ApiResponse::<()>::error("AUTH_010", "Invalid or expired state parameter")));
+        }
+    } else {
+        return (StatusCode::BAD_REQUEST, Json(ApiResponse::<()>::error("AUTH_011", "Missing state parameter")));
+    }
+    
     if let Some(code) = params.get("code") {
         let auth_service_read = auth_service.read().await;
         match auth_service_read.authenticate_oauth2_user(&db_pool, &provider_name, code).await {
@@ -109,10 +122,37 @@ pub async fn refresh_token(
 
 pub async fn logout(
     Extension(auth_service): Extension<Arc<RwLock<AuthService>>>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
-    // In a real implementation, you would extract the user ID from the token
-    // For now, we'll return a success response
-    (StatusCode::OK, Json(ApiResponse::success("Logged out successfully")))
+    // Extract token from Authorization header
+    if let Some(auth_header) = headers.get("authorization") {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if auth_str.starts_with("Bearer ") {
+                let token = auth_str.trim_start_matches("Bearer ").trim();
+                
+                // Validate token to get user ID
+                let auth_service_read = auth_service.read().await;
+                match auth_service_read.validate_token(token).await {
+                    Ok(claims) => {
+                        // Perform logout by removing the session
+                        if let Err(_) = auth_service_read.logout_user(&claims.sub).await {
+                            // Log error but continue with response
+                        }
+                        drop(auth_service_read); // Release the read lock
+                        
+                        return (StatusCode::OK, Json(ApiResponse::success("Logged out successfully")));
+                    }
+                    Err(_) => {
+                        // Invalid token
+                        return (StatusCode::UNAUTHORIZED, Json(ApiResponse::<()>::error("AUTH_001", "Invalid or expired token")));
+                    }
+                }
+            }
+        }
+    }
+    
+    // No valid token found
+    (StatusCode::UNAUTHORIZED, Json(ApiResponse::<()>::error("AUTH_002", "Authorization token required")))
 }
 
 #[derive(serde::Deserialize)]
