@@ -102,6 +102,14 @@ async fn main() -> PlatformResult<()> {
         .route("/api/v1/policies/:id", delete(handlers::policy::delete_policy))
         .route("/api/v1/policies/check", post(handlers::policy::check_permission))
         
+        // BI Tool Integration routes
+        .route("/api/v1/bi/config", get(handlers::bi_integration::get_bi_connection_config))
+        .route("/api/v1/bi/query", post(handlers::bi_integration::execute_bi_query))
+        .route("/api/v1/bi/flight-info", get(handlers::bi_integration::get_flight_sql_info))
+        .route("/api/v1/bi/superset-config", get(handlers::bi_integration::get_superset_config))
+        .route("/api/v1/bi/schema", get(handlers::bi_integration::get_bi_schema))
+        .route("/api/v1/bi/connection-test", get(handlers::bi_integration::test_bi_connection))
+        
         // Apply middleware
         .layer(from_fn(middleware::auth::auth_middleware))
         .layer(
