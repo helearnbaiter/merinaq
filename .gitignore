@@ -2,15 +2,16 @@
 # Compiled and build artifacts
 *.o
 *.obj
-*.exe
-*.dll
-*.so
 *.a
+*.so
+*.dll
+*.exe
 *.out
 
 # Dependencies
 target/
 **/target/
+Cargo.lock
 
 # Logs and temp files
 *.log
@@ -21,7 +22,12 @@ target/
 .vscode/
 .idea/
 
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+
 # Rust-specific
+**/*.rs.bk
 Cargo.lock
-**/Cargo.lock
 ```
