@@ -8,6 +8,7 @@
 //! - Arrow memory format utilities for efficient data processing
 //! - Flight SQL protocol for high-performance data transfer
 //! - ADBC (Arrow Database Connectivity) for standardized database access
+//! - Custom query optimization with caching and rule-based optimizations
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -21,6 +22,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use url::Url;
 use anyhow::Result;
+use crate::query_engine::optimizer::{QueryOptimizer, OptimizationConfig};
 
 // Import Arrow memory format utilities
 use crate::query_engine::arrow::utils as arrow_utils;
@@ -246,6 +248,8 @@ impl DataSourcePlugin for IcebergDataSourcePlugin {
 pub struct QueryEngine {
     context: SessionContext,
     data_source_plugins: HashMap<String, Arc<dyn DataSourcePlugin>>,
+    optimizer: Arc<QueryOptimizer>,
+    optimization_config: OptimizationConfig,
 }
 
 impl QueryEngine {
@@ -259,9 +263,20 @@ impl QueryEngine {
         data_source_plugins.insert("relational".to_string(), Arc::new(RelationalDataSourcePlugin));
         data_source_plugins.insert("iceberg".to_string(), Arc::new(IcebergDataSourcePlugin));
 
+        // Create optimization config
+        let optimization_config = OptimizationConfig::default();
+        
+        // Create query optimizer
+        let optimizer = Arc::new(QueryOptimizer::new(
+            optimization_config.result_cache_ttl,
+            optimization_config.cache_max_size_mb,
+        ));
+
         Self {
             context,
             data_source_plugins,
+            optimizer,
+            optimization_config,
         }
     }
 
@@ -278,8 +293,29 @@ impl QueryEngine {
     }
 
     pub async fn execute_query(&self, sql: &str) -> Result<Vec<RecordBatch>> {
+        // Check if caching is enabled and if result is already cached
+        if self.optimization_config.enable_query_cache {
+            let query_hash = fxhash::hash64(&sql);
+            let query_key = format!("sql_{}", query_hash);
+            
+            if let Some(cached_result) = self.optimizer.cache().get(&query_key).await {
+                tracing::info!("Query result served from cache: {}", sql);
+                return Ok(cached_result);
+            }
+        }
+
+        // Execute the query
         let df = self.context.sql(sql).await?;
         let results = df.collect().await?;
+
+        // Cache the result if caching is enabled
+        if self.optimization_config.enable_query_cache {
+            let query_hash = fxhash::hash64(&sql);
+            let query_key = format!("sql_{}", query_hash);
+            
+            self.optimizer.cache().insert(query_key, results.clone(), query_hash).await;
+        }
+
         Ok(results)
     }
 
@@ -513,3 +549,4 @@ pub mod arrow;
 pub mod flight_sql;
 pub mod adbc;
 pub mod distributed_scheduler;
+pub mod optimizer;
