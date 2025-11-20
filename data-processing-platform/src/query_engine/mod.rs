@@ -43,12 +43,40 @@ impl DataSourcePlugin for MemoryDataSourcePlugin {
     }
 
     async fn create_table_provider(&self, config: &DataSourceConfig) -> Result<Arc<dyn datafusion::datasource::TableProvider>> {
-        // Implementation for memory data source
-        unimplemented!("Memory data source provider not implemented in this example")
+        use datafusion::datasource::MemTable;
+        use datafusion::arrow::datatypes::{Schema, Field, DataType};
+        use std::sync::Arc;
+        
+        // For memory data source, we expect to have data in the configuration
+        let schema_json = config.connection_config.get("schema")
+            .ok_or_else(|| anyhow::anyhow!("Schema not provided for memory data source"))?;
+        
+        // Convert JSON schema to Arrow schema (simplified)
+        // In a real implementation, we would parse the schema properly
+        let fields = vec![
+            Arc::new(Field::new("id", DataType::Int32, false)),
+            Arc::new(Field::new("name", DataType::Utf8, false)),
+        ];
+        let schema = Arc::new(Schema::new(fields));
+        
+        // Create empty record batches for the memory table
+        let batches: Vec<Vec<RecordBatch>> = vec![Vec::new()]; // Empty table for now
+        
+        let table = MemTable::try_new(schema, batches)
+            .map_err(|e| anyhow::anyhow!("Failed to create memory table: {}", e))?;
+            
+        Ok(Arc::new(table))
     }
 
     fn validate_config(&self, config: &DataSourceConfig) -> Result<()> {
         // Validate memory data source configuration
+        let schema = config.connection_config.get("schema")
+            .ok_or_else(|| anyhow::anyhow!("Schema must be provided for memory data source"))?;
+        
+        if !schema.is_object() && !schema.is_string() {
+            return Err(anyhow::anyhow!("Schema must be a JSON object or string"));
+        }
+        
         Ok(())
     }
 }
@@ -118,9 +146,32 @@ impl DataSourcePlugin for RelationalDataSourcePlugin {
     }
 
     async fn create_table_provider(&self, config: &DataSourceConfig) -> Result<Arc<dyn datafusion::datasource::TableProvider>> {
-        // For relational databases, we'd integrate with SQLx/SeaORM to create table providers
-        // This is a simplified implementation
-        unimplemented!("Relational data source provider not implemented in this example")
+        // For relational databases, we'd use the ADBC connector to create table providers
+        // This implementation creates a stub that would connect to actual databases
+        use datafusion::datasource::TableProvider;
+        
+        // In a real implementation, we would:
+        // 1. Parse connection parameters from config.connection_config
+        // 2. Establish connection to the database
+        // 3. Create a table provider that can push down queries
+        
+        // For now, we'll create a stub implementation that connects to the main application database
+        // This is just for demonstration purposes
+        let db_url = config.connection_config.get("connection_string")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Connection string not provided for relational database"))?;
+        
+        // Create a placeholder table provider
+        // In a real implementation, we'd use datafusion's external database connectors
+        let ctx = SessionContext::new();
+        
+        // For demonstration, we'll register a dummy table
+        // In reality, we would create a proper external table provider
+        let table_name = &config.name;
+        
+        // This is a placeholder - in a real implementation, we would connect to the actual database
+        // and create a proper table provider that can execute queries against it
+        Err(anyhow::anyhow!("Relational database connector not fully implemented - would connect to: {}", db_url))
     }
 
     fn validate_config(&self, config: &DataSourceConfig) -> Result<()> {
@@ -147,7 +198,26 @@ impl DataSourcePlugin for IcebergDataSourcePlugin {
 
     async fn create_table_provider(&self, config: &DataSourceConfig) -> Result<Arc<dyn datafusion::datasource::TableProvider>> {
         // For Iceberg, we'd integrate with a Rust Iceberg implementation
-        unimplemented!("Iceberg data source provider not implemented in this example")
+        // This is a placeholder implementation
+        use datafusion::datasource::listing::{ListingTable, ListingTableConfig, ListingTableUrl};
+        use datafusion::datasource::file_format::parquet::ParquetFormat;
+        
+        let path = config.connection_config.get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Path not specified in Iceberg configuration"))?;
+            
+        let table_path = ListingTableUrl::parse(path)?;
+        
+        // In a real implementation, we would use a proper Iceberg connector
+        // For now, we'll treat it as a Parquet source since Iceberg often uses Parquet files
+        let file_format = ParquetFormat::default();
+        let mut config = ListingTableConfig::new(table_path);
+        config = config.with_file_format(Arc::new(file_format));
+        
+        let table = ListingTable::try_new(config)
+            .map_err(|e| anyhow::anyhow!("Failed to create Iceberg table: {}", e))?;
+        
+        Ok(Arc::new(table))
     }
 
     fn validate_config(&self, config: &DataSourceConfig) -> Result<()> {

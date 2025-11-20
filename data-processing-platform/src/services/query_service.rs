@@ -11,17 +11,25 @@ use tracing::info;
 use crate::database::DatabasePool;
 use crate::models::{ExecuteQueryRequest, ExecuteQueryResponse};
 use crate::utils::error::{PlatformError, PlatformResult};
+use crate::query_engine::{QueryEngine, DataSourceConfig};
 
 pub struct QueryService {
     db_pool: DatabasePool,
+    query_engine: Arc<QueryEngine>,
 }
 
 impl QueryService {
     pub fn new(db_pool: DatabasePool) -> Self {
-        QueryService { db_pool }
+        let query_engine = Arc::new(QueryEngine::new());
+        QueryService { 
+            db_pool,
+            query_engine,
+        }
     }
 
     pub async fn execute_query(&self, request: &ExecuteQueryRequest) -> PlatformResult<ExecuteQueryResponse> {
+        use std::time::Instant;
+        
         // Get data source configuration
         let data_source = match self.db_pool.get_data_source_by_id(request.data_source_id).await
             .map_err(|e| PlatformError::DatabaseError(e))? {
@@ -36,104 +44,34 @@ impl QueryService {
             }
         };
 
-        // Execute query based on data source type
-        match data_source.source_type.as_str() {
-            "postgres" => {
-                self.execute_postgres_query(&data_source, &request.sql).await
-            }
-            "mysql" => {
-                self.execute_mysql_query(&data_source, &request.sql).await
-            }
-            "csv" => {
-                self.execute_csv_query(&data_source, &request.sql).await
-            }
-            "parquet" => {
-                self.execute_parquet_query(&data_source, &request.sql).await
-            }
-            _ => {
-                Ok(ExecuteQueryResponse {
-                    success: false,
-                    data: None,
-                    error: Some(format!("Unsupported data source type: {}", data_source.source_type)),
-                    execution_time_ms: None,
-                })
-            }
+        // Convert to our DataSourceConfig
+        let config = DataSourceConfig {
+            name: data_source.name.clone(),
+            source_type: data_source.source_type.clone(),
+            connection_config: data_source.connection_config.clone(),
+        };
+
+        // Register the data source with the query engine if not already registered
+        if let Err(e) = self.query_engine.register_data_source(&config).await {
+            return Ok(ExecuteQueryResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to register data source: {}", e)),
+                execution_time_ms: None,
+            });
         }
-    }
 
-    async fn execute_postgres_query(&self, data_source: &crate::models::DataSource, sql: &str) -> PlatformResult<ExecuteQueryResponse> {
-        let start_time = std::time::Instant::now();
-        
-        // In a real implementation, we'd connect to the actual PostgreSQL database
-        // For this example, we'll use the main application database
-        let rows = sqlx::query(sql)
-            .fetch_all(&self.db_pool.pool)
-            .await;
-
-        match rows {
-            Ok(rows) => {
+        // Execute the query using the DataFusion query engine
+        let start_time = Instant::now();
+        match self.query_engine.execute_query(&request.sql).await {
+            Ok(batches) => {
                 let execution_time = start_time.elapsed().as_millis() as u64;
                 
-                // Convert rows to JSON
+                // Convert RecordBatches to JSON
                 let mut result_data = Vec::new();
-                for row in rows {
-                    let mut row_map = serde_json::Map::new();
-                    
-                    // This is a simplified approach - in reality, you'd need to handle different column types
-                    for column in row.columns() {
-                        match row.try_get_raw(column.ordinal()) {
-                            Ok(value) => {
-                                // Convert the value to a JSON value based on its type
-                                // This is a simplified conversion - real implementation would be more robust
-                                let json_value = match value.type_info().name() {
-                                    "TEXT" | "VARCHAR" | "CHAR" => {
-                                        match row.try_get::<String, _>(column.name()) {
-                                            Ok(val) => serde_json::Value::String(val),
-                                            Err(_) => serde_json::Value::Null,
-                                        }
-                                    }
-                                    "INTEGER" | "INT4" => {
-                                        match row.try_get::<i32, _>(column.name()) {
-                                            Ok(val) => serde_json::Value::Number(serde_json::Number::from(val)),
-                                            Err(_) => serde_json::Value::Null,
-                                        }
-                                    }
-                                    "BIGINT" | "INT8" => {
-                                        match row.try_get::<i64, _>(column.name()) {
-                                            Ok(val) => serde_json::Value::Number(serde_json::Number::from(val)),
-                                            Err(_) => serde_json::Value::Null,
-                                        }
-                                    }
-                                    "NUMERIC" | "DECIMAL" => {
-                                        match row.try_get::<f64, _>(column.name()) {
-                                            Ok(val) => serde_json::Value::Number(serde_json::Number::from_f64(val).unwrap_or(serde_json::Number::from(0))),
-                                            Err(_) => serde_json::Value::Null,
-                                        }
-                                    }
-                                    "BOOLEAN" => {
-                                        match row.try_get::<bool, _>(column.name()) {
-                                            Ok(val) => serde_json::Value::Bool(val),
-                                            Err(_) => serde_json::Value::Null,
-                                        }
-                                    }
-                                    "TIMESTAMPTZ" | "TIMESTAMP" => {
-                                        match row.try_get::<chrono::DateTime<chrono::Utc>, _>(column.name()) {
-                                            Ok(val) => serde_json::Value::String(val.to_rfc3339()),
-                                            Err(_) => serde_json::Value::Null,
-                                        }
-                                    }
-                                    _ => serde_json::Value::Null,
-                                };
-                                
-                                row_map.insert(column.name().to_string(), json_value);
-                            }
-                            Err(_) => {
-                                row_map.insert(column.name().to_string(), serde_json::Value::Null);
-                            }
-                        }
-                    }
-                    
-                    result_data.push(serde_json::Value::Object(row_map));
+                for batch in batches {
+                    let rows = self.record_batch_to_json(&batch)?;
+                    result_data.extend(rows);
                 }
 
                 Ok(ExecuteQueryResponse {
@@ -147,63 +85,14 @@ impl QueryService {
                 Ok(ExecuteQueryResponse {
                     success: false,
                     data: None,
-                    error: Some(e.to_string()),
+                    error: Some(format!("Query execution failed: {}", e)),
                     execution_time_ms: Some(start_time.elapsed().as_millis() as u64),
                 })
             }
         }
     }
 
-    async fn execute_mysql_query(&self, data_source: &crate::models::DataSource, sql: &str) -> PlatformResult<ExecuteQueryResponse> {
-        // Implementation for MySQL queries
-        // Would use sqlx with MySQL feature in a real implementation
-        Ok(ExecuteQueryResponse {
-            success: false,
-            data: None,
-            error: Some("MySQL support not implemented yet".to_string()),
-            execution_time_ms: None,
-        })
-    }
-
-    async fn execute_csv_query(&self, data_source: &crate::models::DataSource, sql: &str) -> PlatformResult<ExecuteQueryResponse> {
-        // Implementation for CSV queries using DataFusion
-        let start_time = std::time::Instant::now();
-        
-        // In a real implementation, we'd use DataFusion to query CSV files
-        // This is a placeholder implementation
-        let ctx = SessionContext::new();
-        
-        // If the data source configuration specifies a CSV file path, we would register it
-        // For this example, we'll return a not implemented response
-        let execution_time = start_time.elapsed().as_millis() as u64;
-        
-        Ok(ExecuteQueryResponse {
-            success: false,
-            data: None,
-            error: Some("CSV query support not fully implemented yet".to_string()),
-            execution_time_ms: Some(execution_time),
-        })
-    }
-
-    async fn execute_parquet_query(&self, data_source: &crate::models::DataSource, sql: &str) -> PlatformResult<ExecuteQueryResponse> {
-        // Implementation for Parquet queries using DataFusion
-        let start_time = std::time::Instant::now();
-        
-        // In a real implementation, we'd use DataFusion to query Parquet files
-        // This is a placeholder implementation
-        let ctx = SessionContext::new();
-        
-        // If the data source configuration specifies a Parquet file path, we would register it
-        // For this example, we'll return a not implemented response
-        let execution_time = start_time.elapsed().as_millis() as u64;
-        
-        Ok(ExecuteQueryResponse {
-            success: false,
-            data: None,
-            error: Some("Parquet query support not fully implemented yet".to_string()),
-            execution_time_ms: Some(execution_time),
-        })
-    }
+    
 
     pub async fn get_schema(&self, data_source_id: i32) -> PlatformResult<serde_json::Value> {
         // Get data source
@@ -273,5 +162,159 @@ impl QueryService {
                 Err(PlatformError::ValidationError("Schema introspection not supported for this data source type".to_string()))
             }
         }
+    }
+
+    // Helper function to convert RecordBatch to JSON
+    fn record_batch_to_json(&self, batch: &datafusion::arrow::record_batch::RecordBatch) -> PlatformResult<Vec<serde_json::Value>> {
+        use datafusion::arrow::array::*;
+        use datafusion::arrow::datatypes::{DataType, SchemaRef};
+
+        let mut result = Vec::new();
+        let schema: SchemaRef = batch.schema();
+
+        for row_idx in 0..batch.num_rows() {
+            let mut row = serde_json::Map::new();
+
+            for (col_idx, field) in schema.fields().iter().enumerate() {
+                let col_name = field.name();
+                let array = batch.column(col_idx);
+
+                let value = match array.data_type() {
+                    DataType::Int8 => {
+                        let arr = array.as_any().downcast_ref::<Int8Array>().unwrap();
+                        if arr.is_null(row_idx) {
+                            serde_json::Value::Null
+                        } else {
+                            serde_json::Value::Number(serde_json::Number::from(arr.value(row_idx)))
+                        }
+                    },
+                    DataType::Int16 => {
+                        let arr = array.as_any().downcast_ref::<Int16Array>().unwrap();
+                        if arr.is_null(row_idx) {
+                            serde_json::Value::Null
+                        } else {
+                            serde_json::Value::Number(serde_json::Number::from(arr.value(row_idx)))
+                        }
+                    },
+                    DataType::Int32 => {
+                        let arr = array.as_any().downcast_ref::<Int32Array>().unwrap();
+                        if arr.is_null(row_idx) {
+                            serde_json::Value::Null
+                        } else {
+                            serde_json::Value::Number(serde_json::Number::from(arr.value(row_idx)))
+                        }
+                    },
+                    DataType::Int64 => {
+                        let arr = array.as_any().downcast_ref::<Int64Array>().unwrap();
+                        if arr.is_null(row_idx) {
+                            serde_json::Value::Null
+                        } else {
+                            serde_json::Value::Number(serde_json::Number::from(arr.value(row_idx)))
+                        }
+                    },
+                    DataType::UInt8 => {
+                        let arr = array.as_any().downcast_ref::<UInt8Array>().unwrap();
+                        if arr.is_null(row_idx) {
+                            serde_json::Value::Null
+                        } else {
+                            serde_json::Value::Number(serde_json::Number::from(arr.value(row_idx)))
+                        }
+                    },
+                    DataType::UInt16 => {
+                        let arr = array.as_any().downcast_ref::<UInt16Array>().unwrap();
+                        if arr.is_null(row_idx) {
+                            serde_json::Value::Null
+                        } else {
+                            serde_json::Value::Number(serde_json::Number::from(arr.value(row_idx)))
+                        }
+                    },
+                    DataType::UInt32 => {
+                        let arr = array.as_any().downcast_ref::<UInt32Array>().unwrap();
+                        if arr.is_null(row_idx) {
+                            serde_json::Value::Null
+                        } else {
+                            serde_json::Value::Number(serde_json::Number::from(arr.value(row_idx)))
+                        }
+                    },
+                    DataType::UInt64 => {
+                        let arr = array.as_any().downcast_ref::<UInt64Array>().unwrap();
+                        if arr.is_null(row_idx) {
+                            serde_json::Value::Null
+                        } else {
+                            serde_json::Value::Number(serde_json::Number::from(arr.value(row_idx)))
+                        }
+                    },
+                    DataType::Float32 => {
+                        let arr = array.as_any().downcast_ref::<Float32Array>().unwrap();
+                        if arr.is_null(row_idx) {
+                            serde_json::Value::Null
+                        } else {
+                            if arr.value(row_idx).is_finite() {
+                                serde_json::Value::Number(serde_json::Number::from_f64(arr.value(row_idx) as f64)
+                                    .unwrap_or(serde_json::Number::from_f64(0.0).unwrap()))
+                            } else {
+                                serde_json::Value::Number(serde_json::Number::from_f64(0.0).unwrap())
+                            }
+                        }
+                    },
+                    DataType::Float64 => {
+                        let arr = array.as_any().downcast_ref::<Float64Array>().unwrap();
+                        if arr.is_null(row_idx) {
+                            serde_json::Value::Null
+                        } else {
+                            if arr.value(row_idx).is_finite() {
+                                serde_json::Value::Number(serde_json::Number::from_f64(arr.value(row_idx))
+                                    .unwrap_or(serde_json::Number::from_f64(0.0).unwrap()))
+                            } else {
+                                serde_json::Value::Number(serde_json::Number::from_f64(0.0).unwrap())
+                            }
+                        }
+                    },
+                    DataType::Utf8 => {
+                        let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
+                        if arr.is_null(row_idx) {
+                            serde_json::Value::Null
+                        } else {
+                            serde_json::Value::String(arr.value(row_idx).to_string())
+                        }
+                    },
+                    DataType::LargeUtf8 => {
+                        let arr = array.as_any().downcast_ref::<LargeStringArray>().unwrap();
+                        if arr.is_null(row_idx) {
+                            serde_json::Value::Null
+                        } else {
+                            serde_json::Value::String(arr.value(row_idx).to_string())
+                        }
+                    },
+                    DataType::Boolean => {
+                        let arr = array.as_any().downcast_ref::<BooleanArray>().unwrap();
+                        if arr.is_null(row_idx) {
+                            serde_json::Value::Null
+                        } else {
+                            serde_json::Value::Bool(arr.value(row_idx))
+                        }
+                    },
+                    DataType::Timestamp(_, _) => {
+                        let arr = array.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
+                        if arr.is_null(row_idx) {
+                            serde_json::Value::Null
+                        } else {
+                            // Convert timestamp to ISO string
+                            let ts = chrono::NaiveDateTime::from_timestamp_opt(arr.value(row_idx) / 1_000_000_000, 
+                                (arr.value(row_idx) % 1_000_000_000) as u32)
+                                .unwrap_or_default();
+                            serde_json::Value::String(ts.format("%Y-%m-%d %H:%M:%S%.f").to_string())
+                        }
+                    },
+                    _ => serde_json::Value::String(format!("Unsupported data type: {:?}", array.data_type())),
+                };
+
+                row.insert(col_name.clone(), value);
+            }
+
+            result.push(serde_json::Value::Object(row));
+        }
+
+        Ok(result)
     }
 }
