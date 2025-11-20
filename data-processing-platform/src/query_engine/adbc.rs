@@ -227,7 +227,7 @@ impl Default for AdbcMetadata {
         Self {
             driver_name: "Data Processing Platform ADBC Driver".to_string(),
             driver_version: env!("CARGO_PKG_VERSION").to_string(),
-            driver_arrow_version: arrow::io::flight::FlightDescriptor::default().protocol_version.to_string(),
+            driver_arrow_version: "52.2".to_string(), // Use Arrow version
             vendor_name: "Data Processing Platform".to_string(),
             vendor_version: env!("CARGO_PKG_VERSION").to_string(),
         }

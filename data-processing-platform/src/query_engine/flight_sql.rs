@@ -6,15 +6,15 @@
 use arrow_flight::flight_service_server::FlightService;
 use arrow_flight::{
     FlightData, FlightDescriptor, FlightInfo, HandshakeRequest, HandshakeResponse,
-    Location, Ticket, PollInfo, PutResult, SchemaAsIpc, SchemaResult, Criteria,
+    Location, Ticket, PollInfo, PutResult, SchemaResult, Criteria,
     ActionType, CreatePreparedStatementRequest, CreatePreparedStatementResult,
     ClosePreparedStatementRequest, Command, CommandGetCatalogs,
     CommandGetCrossReference, CommandGetDbSchemas, CommandGetExportedKeys,
     CommandGetImportedKeys, CommandGetPrimaryKeys, CommandGetSqlInfo,
     CommandGetTableTypes, CommandGetTables, CommandGetXdbcTypeInfo,
     CommandPreparedStatementQuery, CommandPreparedStatementUpdate,
-    CommandStatementQuery, CommandStatementUpdate, FlightEndpoing, PollInfo,
-    Registration, Result, SubmitActionRequest, SubmitActionResult,
+    CommandStatementQuery, CommandStatementUpdate, FlightEndpoint, PollInfo,
+    Result, SubmitActionRequest, SubmitActionResult, SchemaAsIpc,
 };
 use arrow_ipc::convert::try_schema_from_ipc_buffer;
 use datafusion::arrow::ipc::writer::IpcWriteOptions;
@@ -73,24 +73,28 @@ impl FlightService for FlightSqlService {
         // Convert batches to FlightData stream
         let (tx, rx) = tokio::sync::mpsc::channel(4);
         
+        // Spawn a task to send the data
+        let batches_clone = batches.clone(); // Clone the batches to move into async block
         tokio::spawn(async move {
-            for batch in batches {
-                let schema = batch.schema();
-                
-                // Serialize schema
+            if !batches_clone.is_empty() {
+                // Send schema first
+                let schema = batches_clone[0].schema();
                 let options = IpcWriteOptions::default();
-                let schema_flight_data = SchemaAsIpc::new(&schema, &options)
-                    .try_into()
-                    .unwrap();
+                let schema_flight_data = SchemaAsIpc::new(&schema, &options).try_into();
                 
-                if tx.send(Ok(schema_flight_data)).await.is_err() {
-                    break;
+                if let Ok(data) = schema_flight_data {
+                    if tx.send(Ok(data)).await.is_err() {
+                        return;
+                    }
                 }
+            }
 
-                // Serialize record batch
+            // Send record batches
+            for batch in batches_clone {
+                // Serialize record batch to IPC format
                 let mut buf: Vec<u8> = Vec::new();
                 {
-                    let mut writer = FileWriter::try_new(&mut buf, &schema).unwrap();
+                    let mut writer = FileWriter::try_new(&mut buf, batch.schema()).unwrap();
                     writer.write(&batch).unwrap();
                     writer.finish().unwrap();
                 }
@@ -98,7 +102,7 @@ impl FlightService for FlightSqlService {
                 let flight_data = FlightData {
                     flight_descriptor: None,
                     data_header: buf,
-                    data_body: vec![],
+                    data_body: vec![], // Data is in data_header for record batches
                     app_metadata: vec![],
                 };
 

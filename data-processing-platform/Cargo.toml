@@ -47,8 +47,13 @@ chrono = { version = "0.4", features = ["serde"] }
 url = "2.0"
 
 # Flight SQL and ADBC
-flight-sql = "0.18"
-adbc = "0.18"
+arrow-flight = "52.2"
+flight-sql = "52.2"
+adbc = "52.2"
+tonic = { version = "0.10", features = ["transport", "codegen", "prost"] }
+prost = "0.12"
+tokio-stream = "0.1"
+bincode = "1.3"
 
 # Cryptography
 bcrypt = "0.15"
