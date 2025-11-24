@@ -33,6 +33,7 @@ datafusion = { version = "40.0", features = ["parquet", "json", "crypto_expressi
 arrow = { version = "52.2", features = ["prettyprint"] }
 parquet = "52.2"
 rust-iceberg = { version = "0.3", features = ["catalog", "io"] }
+ballista = { version = "0.13", features = ["standalone", "client"] }
 
 # HTTP client
 reqwest = { version = "0.11", features = ["json"] }
