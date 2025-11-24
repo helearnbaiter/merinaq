@@ -1,40 +1,6 @@
 ```
-# Compiled and build artifacts
-*.o
-*.obj
-*.exe
-*.dll
-*.so
-*.a
-*.out
-
-# Dependencies
-target/
-node_modules/
-venv/
-.venv/
-__pycache__/
-.mypy_cache/
-.pytest_cache/
-.gradle/
-
-# Logs and temp files
-*.log
-*.tmp
-*.swp
-
-# Environment
-.env
-.env.local
-*.env.*
-
-# Editors
-.vscode/
-.idea/
-
-# Build and distribution
-dist/
-build/
-coverage/
-htmlcov/
+# Documentation files
+DISTRIBUTED_SCHEDULER_BALLISTA_INTEGRATION.md
+DISTRIBUTED_SCHEDULER_REFACTOR_PLAN.md
+DISTRIBUTED_SCHEDULER_SUMMARY.md
 ```
