@@ -197,51 +197,8 @@ impl DataSourcePlugin for RelationalDataSourcePlugin {
     }
 }
 
-// Iceberg data source plugin
-pub struct IcebergDataSourcePlugin;
-
-#[async_trait]
-impl DataSourcePlugin for IcebergDataSourcePlugin {
-    fn name(&self) -> &str {
-        "iceberg"
-    }
-
-    async fn create_table_provider(&self, config: &DataSourceConfig) -> Result<Arc<dyn datafusion::datasource::TableProvider>> {
-        // For Iceberg, we'd integrate with a Rust Iceberg implementation
-        // This is a placeholder implementation
-        use datafusion::datasource::listing::{ListingTable, ListingTableConfig, ListingTableUrl};
-        use datafusion::datasource::file_format::parquet::ParquetFormat;
-        
-        let path = config.connection_config.get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Path not specified in Iceberg configuration"))?;
-            
-        let table_path = ListingTableUrl::parse(path)?;
-        
-        // In a real implementation, we would use a proper Iceberg connector
-        // For now, we'll treat it as a Parquet source since Iceberg often uses Parquet files
-        let file_format = ParquetFormat::default();
-        let mut config = ListingTableConfig::new(table_path);
-        config = config.with_file_format(Arc::new(file_format));
-        
-        let table = ListingTable::try_new(config)
-            .map_err(|e| anyhow::anyhow!("Failed to create Iceberg table: {}", e))?;
-        
-        Ok(Arc::new(table))
-    }
-
-    fn validate_config(&self, config: &DataSourceConfig) -> Result<()> {
-        let path = config.connection_config.get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Path not specified in Iceberg configuration"))?;
-
-        if path.is_empty() {
-            return Err(anyhow::anyhow!("Path cannot be empty"));
-        }
-
-        Ok(())
-    }
-}
+// Import the new Iceberg implementation
+use crate::query_engine::iceberg::IcebergDataSourcePlugin;
 
 
 // Query engine implementation
@@ -550,3 +507,4 @@ pub mod flight_sql;
 pub mod adbc;
 pub mod distributed_scheduler;
 pub mod optimizer;
+pub mod iceberg;
