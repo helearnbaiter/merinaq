@@ -145,6 +145,14 @@ async fn main() -> PlatformResult<()> {
     let query_service = Arc::new(QueryService::new(db_pool.clone()));
     info!("Query service initialized");
 
+    // Initialize Query Engine for Flight SQL
+    let mut query_engine = crate::query_engine::QueryEngine::new();
+    
+    // Register any default data sources if needed
+    // For now, we'll just create the engine and wrap it in Arc
+    let query_engine = Arc::new(query_engine);
+    info!("Query engine initialized");
+
     // Build application with shared state using modular routing
     let app = api_version::create_api_router(
         db_pool,
@@ -164,12 +172,40 @@ async fn main() -> PlatformResult<()> {
             .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
     );
 
-    // Run server
+    // Start Flight SQL server in a background task if enabled
+    let flight_enabled = std::env::var("FLIGHT_ENABLED")
+        .unwrap_or_else(|_| "true".to_string())
+        .parse()
+        .unwrap_or(true);
+    
+    if flight_enabled {
+        let flight_query_engine = query_engine.clone();
+        let flight_host = std::env::var("FLIGHT_HOST")
+            .unwrap_or_else(|_| config.server.host.clone());
+        let flight_port = std::env::var("FLIGHT_PORT")
+            .unwrap_or_else(|_| "9090".to_string())
+            .parse()
+            .unwrap_or(9090u16);
+
+        tokio::spawn(async move {
+            if let Err(e) = crate::query_engine::flight_sql_server::start_flight_sql_server(
+                flight_query_engine,
+                flight_host,
+                flight_port,
+            ).await {
+                eprintln!("Flight SQL server error: {}", e);
+            }
+        });
+        
+        info!("Flight SQL server started on {}:{}", flight_host, flight_port);
+    }
+
+    // Run main HTTP server
     let listener = tokio::net::TcpListener::bind(&format!("{}:{}", config.server.host, config.server.port))
         .await
         .map_err(|e| PlatformError::InternalError(format!("Failed to bind to address: {}", e)))?;
     
-    info!("Server running on http://{}:{}", config.server.host, config.server.port);
+    info!("HTTP server running on http://{}:{}", config.server.host, config.server.port);
     
     axum::serve(listener, app)
         .await

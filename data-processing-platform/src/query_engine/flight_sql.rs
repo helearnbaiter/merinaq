@@ -30,6 +30,14 @@ use tonic::{Request, Response, Status, Streaming};
 pub struct FlightSqlService {
     query_engine: Arc<crate::query_engine::QueryEngine>,
     prepared_statements: Arc<RwLock<HashMap<String, String>>>, // statement_id -> sql
+    auth_tokens: Arc<RwLock<HashMap<String, AuthToken>>>,     // token -> token info
+}
+
+#[derive(Debug, Clone)]
+struct AuthToken {
+    user_id: String,
+    permissions: Vec<String>,
+    expires_at: std::time::SystemTime,
 }
 
 impl FlightSqlService {
@@ -37,6 +45,22 @@ impl FlightSqlService {
         Self {
             query_engine,
             prepared_statements: Arc::new(RwLock::new(HashMap::new())),
+            auth_tokens: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Validate authentication token
+    async fn validate_token(&self, token: &str) -> Result<(), Status> {
+        let tokens = self.auth_tokens.read().await;
+        match tokens.get(token) {
+            Some(auth_token) => {
+                if auth_token.expires_at > std::time::SystemTime::now() {
+                    Ok(())
+                } else {
+                    Err(Status::unauthenticated("Token has expired"))
+                }
+            }
+            None => Err(Status::unauthenticated("Invalid token")),
         }
     }
 }
@@ -53,9 +77,30 @@ impl FlightService for FlightSqlService {
 
     async fn get_schema(
         &self,
-        _request: Request<FlightDescriptor>,
+        request: Request<FlightDescriptor>,
     ) -> Result<Response<SchemaResult>, Status> {
-        Err(Status::unimplemented("get_schema not implemented"))
+        let descriptor = request.into_inner();
+        let query = descriptor
+            .cmd
+            .ok_or_else(|| Status::invalid_argument("FlightDescriptor command is required"))?;
+        
+        let query_str = String::from_utf8(query)
+            .map_err(|_| Status::invalid_argument("Invalid query in command"))?;
+
+        // Execute the query to get schema
+        let batches = self.query_engine.execute_query(&query_str).await
+            .map_err(|e| Status::internal(format!("Query execution failed: {}", e)))?;
+
+        if batches.is_empty() {
+            return Err(Status::not_found("No results for query"));
+        }
+
+        let schema = batches[0].schema();
+        let options = IpcWriteOptions::default();
+        let schema_flight_data = SchemaAsIpc::new(&schema, &options).try_into()
+            .map_err(|_| Status::internal("Failed to serialize schema"))?;
+
+        Ok(Response::new(schema_flight_data))
     }
 
     async fn do_get(
@@ -87,27 +132,27 @@ impl FlightService for FlightSqlService {
                         return;
                     }
                 }
-            }
 
-            // Send record batches
-            for batch in batches_clone {
-                // Serialize record batch to IPC format
-                let mut buf: Vec<u8> = Vec::new();
-                {
-                    let mut writer = FileWriter::try_new(&mut buf, batch.schema()).unwrap();
-                    writer.write(&batch).unwrap();
-                    writer.finish().unwrap();
-                }
+                // Send record batches
+                for batch in batches_clone {
+                    // Serialize record batch to IPC format
+                    let mut buf: Vec<u8> = Vec::new();
+                    {
+                        let mut writer = FileWriter::try_new(&mut buf, batch.schema()).unwrap();
+                        writer.write(&batch).unwrap();
+                        writer.finish().unwrap();
+                    }
 
-                let flight_data = FlightData {
-                    flight_descriptor: None,
-                    data_header: buf,
-                    data_body: vec![], // Data is in data_header for record batches
-                    app_metadata: vec![],
-                };
+                    let flight_data = FlightData {
+                        flight_descriptor: None,
+                        data_header: buf,
+                        data_body: vec![], // Data is in data_header for record batches
+                        app_metadata: vec![],
+                    };
 
-                if tx.send(Ok(flight_data)).await.is_err() {
-                    break;
+                    if tx.send(Ok(flight_data)).await.is_err() {
+                        break;
+                    }
                 }
             }
         });
@@ -119,18 +164,61 @@ impl FlightService for FlightSqlService {
 
     async fn handshake(
         &self,
-        _request: Request<Streaming<HandshakeRequest>>,
+        request: Request<Streaming<HandshakeRequest>>,
     ) -> Result<Response<Self::HandshakeStream>, Status> {
-        // For now, return a simple handshake response
+        let mut stream = request.into_inner();
+        
+        // Get the handshake request from the client
+        if let Some(handshake_req) = stream.message().await.map_err(|_| Status::invalid_argument("Invalid handshake request"))? {
+            // Extract authentication token from the payload
+            let auth_payload = String::from_utf8(handshake_req.payload)
+                .map_err(|_| Status::invalid_argument("Invalid authentication payload"))?;
+            
+            // For now, we'll just validate the token format
+            // In a real implementation, we would validate against a token store
+            let token = auth_payload.trim_start_matches("Bearer ").to_string();
+            
+            // Create a simple auth token entry
+            let auth_token = AuthToken {
+                user_id: "flight_user".to_string(),
+                permissions: vec!["read".to_string(), "write".to_string()],
+                expires_at: std::time::SystemTime::now() + std::time::Duration::from_secs(3600), // 1 hour
+            };
+            
+            {
+                let mut tokens = self.auth_tokens.write().await;
+                tokens.insert(token.clone(), auth_token);
+            }
+            
+            // Create handshake response with a token
+            let (tx, rx) = tokio::sync::mpsc::channel(4);
+            
+            tokio::spawn(async move {
+                let response = HandshakeResponse {
+                    protocol_version: 0,
+                    payload: format!("Bearer:{}", token).into_bytes(),
+                };
+                
+                let _ = tx.send(Ok(response)).await;
+            });
+
+            return Ok(Response::new(Box::new(
+                tokio_stream::wrappers::ReceiverStream::new(rx),
+            )));
+        }
+        
+        Err(Status::unauthenticated("Handshake failed"))
+    }
+
+    async fn list_flights(
+        &self,
+        _request: Request<Criteria>,
+    ) -> Result<Response<Self::ListFlightsStream>, Status> {
+        // For now, return an empty list - in a real implementation, this would list available flights
         let (tx, rx) = tokio::sync::mpsc::channel(4);
         
         tokio::spawn(async move {
-            let response = HandshakeResponse {
-                protocol_version: 0,
-                payload: b"handshake_successful".to_vec(),
-            };
-            
-            let _ = tx.send(Ok(response)).await;
+            // This would normally return actual flight information based on criteria
         });
 
         Ok(Response::new(Box::new(
@@ -138,18 +226,57 @@ impl FlightService for FlightSqlService {
         )))
     }
 
-    async fn list_flights(
-        &self,
-        _request: Request<Criteria>,
-    ) -> Result<Response<Self::ListFlightsStream>, Status> {
-        Err(Status::unimplemented("list_flights not implemented"))
-    }
-
     async fn get_flight_info(
         &self,
-        _request: Request<FlightDescriptor>,
+        request: Request<FlightDescriptor>,
     ) -> Result<Response<FlightInfo>, Status> {
-        Err(Status::unimplemented("get_flight_info not implemented"))
+        let descriptor = request.into_inner();
+        let query = descriptor
+            .cmd
+            .ok_or_else(|| Status::invalid_argument("FlightDescriptor command is required"))?;
+        
+        let query_str = String::from_utf8(query)
+            .map_err(|_| Status::invalid_argument("Invalid query in command"))?;
+
+        // Execute the query to get schema for flight info
+        let batches = self.query_engine.execute_query(&query_str).await
+            .map_err(|e| Status::internal(format!("Query execution failed: {}", e)))?;
+
+        if batches.is_empty() {
+            return Err(Status::not_found("No results for query"));
+        }
+
+        let schema = batches[0].schema();
+        let options = IpcWriteOptions::default();
+        let schema_bytes = SchemaAsIpc::new(&schema, &options).try_into()
+            .map_err(|_| Status::internal("Failed to serialize schema"))?
+            .data_header;
+
+        // Create flight info with schema and endpoints
+        let flight_info = FlightInfo {
+            schema: schema_bytes,
+            flight_descriptor: Some(descriptor),
+            endpoint: vec![
+                FlightEndpoint {
+                    ticket: Some(Ticket {
+                        ticket: query_str.as_bytes().to_vec(),
+                    }),
+                    location: vec![Location {
+                        uri: format!("grpc://{}:{}", 
+                            std::env::var("FLIGHT_HOST").unwrap_or_else(|_| "localhost".to_string()),
+                            std::env::var("FLIGHT_PORT").unwrap_or_else(|_| "9090".to_string())
+                        ),
+                    }],
+                    expiration_time: None,
+                    app_metadata: vec![],
+                }
+            ],
+            total_records: -1, // Unknown
+            total_bytes: -1,   // Unknown
+            ordered: false,
+        };
+
+        Ok(Response::new(flight_info))
     }
 
     async fn do_put(

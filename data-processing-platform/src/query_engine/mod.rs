@@ -504,6 +504,8 @@ fn record_batch_to_json(batch: &RecordBatch) -> Result<Vec<serde_json::Value>> {
 
 pub mod arrow;
 pub mod flight_sql;
+pub mod flight_sql_server;
+pub mod load_balancer;
 pub mod adbc;
 pub mod distributed_scheduler;
 pub mod optimizer;
