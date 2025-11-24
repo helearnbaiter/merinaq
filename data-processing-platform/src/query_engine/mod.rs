@@ -200,6 +200,10 @@ impl DataSourcePlugin for RelationalDataSourcePlugin {
 // Import the new Iceberg implementation
 use crate::query_engine::iceberg::IcebergDataSourcePlugin;
 
+// Import Ballista integration
+use crate::query_engine::ballista_integration::BallistaDistributedQueryScheduler;
+use crate::query_engine::ballista_config::BallistaConfig;
+
 
 // Query engine implementation
 pub struct QueryEngine {
@@ -207,6 +211,7 @@ pub struct QueryEngine {
     data_source_plugins: HashMap<String, Arc<dyn DataSourcePlugin>>,
     optimizer: Arc<QueryOptimizer>,
     optimization_config: OptimizationConfig,
+    ballista_scheduler: Option<Arc<BallistaDistributedQueryScheduler>>,
 }
 
 impl QueryEngine {
@@ -229,11 +234,21 @@ impl QueryEngine {
             optimization_config.cache_max_size_mb,
         ));
 
+        // Initialize Ballista scheduler (optional, as it requires cluster setup)
+        let ballista_scheduler = match BallistaDistributedQueryScheduler::new() {
+            Ok(scheduler) => Some(Arc::new(scheduler)),
+            Err(e) => {
+                tracing::warn!("Failed to initialize Ballista scheduler: {}. Running in local mode.", e);
+                None
+            }
+        };
+
         Self {
             context,
             data_source_plugins,
             optimizer,
             optimization_config,
+            ballista_scheduler,
         }
     }
 
@@ -292,6 +307,32 @@ impl QueryEngine {
             .register_parquet(name, path, ParquetReadOptions::default())
             .await?;
         Ok(())
+    }
+
+    pub fn has_ballista_support(&self) -> bool {
+        self.ballista_scheduler.is_some()
+    }
+
+    pub fn get_ballista_scheduler(&self) -> Option<Arc<BallistaDistributedQueryScheduler>> {
+        self.ballista_scheduler.clone()
+    }
+
+    pub async fn init_ballista_scheduler(&mut self, host: &str, port: u16) -> Result<()> {
+        if let Some(ref scheduler) = self.ballista_scheduler {
+            scheduler.init_ballista(host, port).await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Ballista scheduler not initialized"))
+        }
+    }
+
+    pub async fn execute_distributed_query(&self, sql: &str) -> Result<Vec<RecordBatch>> {
+        if let Some(ref scheduler) = self.ballista_scheduler {
+            scheduler.execute_query_sql(sql).await
+        } else {
+            // Fall back to local execution
+            self.execute_query(sql).await
+        }
     }
 
     pub fn context(&self) -> &SessionContext {
