@@ -6,28 +6,78 @@
 *.so
 *.dll
 *.exe
-*.out
+*.pyc
+__pycache__/
+*.class
+*.jar
+*.war
+*.zip
+*.tar.gz
+*.tar.bz2
+*.tar.xz
 
 # Dependencies
+node_modules/
+venv/
+.venv/
+.env
+.env.local
+.env.*
+
+# Build directories
+dist/
+build/
 target/
-**/target/
-Cargo.lock
+*.out
 
 # Logs and temp files
 *.log
 *.tmp
 *.swp
+*.swo
 
 # Editors
 .vscode/
 .idea/
 
-# Coverage reports
+# System files
+.DS_Store
+Thumbs.db
+
+# Coverage
 coverage/
 htmlcov/
 .coverage
 
-# Rust-specific
-**/*.rs.bk
+# Python specific
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git/
+
+# Rust specific
 Cargo.lock
+target/
+*.rs.bk
+$CARGO_HOME/
+.cargo/
+
+# Test and cache directories
+.mypy_cache/
+.pytest_cache/
+.hypothesis/
 ```
