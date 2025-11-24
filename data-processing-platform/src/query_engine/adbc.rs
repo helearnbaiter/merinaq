@@ -100,9 +100,23 @@ impl AdbcDatabase for QueryEngineAdbcDatabase {
     }
 
     async fn list_tables(&self) -> AdbcResult<Vec<String>> {
-        // This would require introspection capability in the query engine
-        // For now, return an empty list or implement based on registered tables
-        Err(AdbcError::NotImplemented("list_tables not implemented".to_string()))
+        // Use the query engine's table introspection capability
+        let table_names = self.query_engine.context().catalog_names();
+        let mut tables = Vec::new();
+        
+        for catalog_name in table_names {
+            if let Some(catalog) = self.query_engine.context().catalog(&catalog_name) {
+                for schema_name in catalog.schema_names() {
+                    if let Some(schema) = catalog.schema(&schema_name) {
+                        for table_name in schema.table_names() {
+                            tables.push(table_name);
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(tables)
     }
 
     async fn connect(&self) -> AdbcResult<Arc<AdbcConnection>> {
@@ -195,9 +209,32 @@ pub mod utils {
     }
 
     pub fn bytes_to_record_batch(bytes: &[u8], schema: &Schema) -> AdbcResult<RecordBatch> {
-        // This is a simplified implementation
-        // In a real implementation, we'd need to properly deserialize the IPC format
-        Err(AdbcError::NotImplemented("bytes_to_record_batch not implemented".to_string()))
+        use arrow::ipc::reader::StreamReader;
+        use std::io::Cursor;
+        
+        let cursor = Cursor::new(bytes);
+        let mut reader = StreamReader::try_new(cursor, None)
+            .map_err(|e| AdbcError::Internal(format!("Failed to create IPC reader: {}", e)))?;
+        
+        // Get the first batch from the stream
+        if let Some(batch_result) = reader.next() {
+            let batch = batch_result
+                .map_err(|e| AdbcError::Internal(format!("Failed to read record batch: {}", e)))?;
+            Ok(batch)
+        } else {
+            // If no batch is available, create an empty one with the provided schema
+            let columns: Vec<Arc<dyn Array>> = schema
+                .fields()
+                .iter()
+                .map(|field| {
+                    // Create an empty array for each field type
+                    arrow::array::new_empty_array(field.data_type())
+                })
+                .collect();
+            
+            RecordBatch::try_new(schema.clone(), columns)
+                .map_err(|e| AdbcError::Internal(format!("Failed to create empty record batch: {}", e)))
+        }
     }
 }
 

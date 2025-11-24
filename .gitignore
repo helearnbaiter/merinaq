@@ -10,106 +10,31 @@
 
 # Dependencies
 target/
-**/target/
-Cargo.lock
+node_modules/
+venv/
+.venv/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.gradle/
 
 # Logs and temp files
 *.log
 *.tmp
 *.swp
 
-# Editors
-.vscode/
-.idea/
-*.swp
-*.swo
-
 # Environment
 .env
 .env.local
 *.env.*
 
-# Coverage
-coverage/
-htmlcov/
-.coverage
-
-# MyPy
-.mypy_cache/
-
-# Pytest
-.pytest_cache/
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Rust specific
-**/*.rs.bk
-```
-
-Wait, I need to reconsider this. The file changes show Rust files (.rs), and the current project appears to be a Rust project. Let me check if any of the added/modified files are build artifacts or temporary files that should be ignored.
-
-Looking at the changes:
-- Added: `data-processing-platform/src/query_engine/flight_sql_server.rs`, `data-processing-platform/src/query_engine/load_balancer.rs` (both are source files)
-- Modified: `data-processing-platform/src/main.rs`, `data-processing-platform/src/query_engine/flight_sql.rs`, `data-processing-platform/src/query_engine/mod.rs` (all are source files)
-
-These are all Rust source files (.rs), not build artifacts. However, for a Rust project, we should still include common Rust build artifact patterns in .gitignore.
-
-```
-# Compiled and build artifacts
-*.o
-*.obj
-*.exe
-*.dll
-*.so
-*.a
-*.out
-
-# Dependencies
-target/
-**/target/
-Cargo.lock
-
-# Logs and temp files
-*.log
-*.tmp
-*.swp
-
 # Editors
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# Environment
-.env
-.env.local
-*.env.*
-
-# Coverage
+# Build and distribution
+dist/
+build/
 coverage/
 htmlcov/
-.coverage
-
-# MyPy
-.mypy_cache/
-
-# Pytest
-.pytest_cache/
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Rust specific
-**/*.rs.bk
-debug/
-release/
-.DS_Store
-Thumbs.db
 ```
