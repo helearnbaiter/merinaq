@@ -32,9 +32,7 @@ use tracing_subscriber::FmtSubscriber;
 use crate::{
     config::AppConfig,
     database::DatabasePool,
-    services::auth_service::AuthService,
-    services::casbin_service::CasbinService,
-    services::query_service::QueryService,
+    services::{AuthService, CasbinService, QueryService, AdbcService},
     utils::error::{PlatformError, PlatformResult},
 };
 
@@ -145,13 +143,17 @@ async fn main() -> PlatformResult<()> {
     let query_service = Arc::new(QueryService::new(db_pool.clone()));
     info!("Query service initialized");
 
-    // Initialize Query Engine for Flight SQL
+    // Initialize Query Engine for Flight SQL and ADBC
     let mut query_engine = crate::query_engine::QueryEngine::new();
     
     // Register any default data sources if needed
     // For now, we'll just create the engine and wrap it in Arc
     let query_engine = Arc::new(query_engine);
     info!("Query engine initialized");
+
+    // Initialize ADBC service
+    let adbc_service = Arc::new(AdbcService::new(query_engine.clone()));
+    info!("ADBC service initialized");
 
     // Build application with shared state using modular routing
     let app = api_version::create_api_router(

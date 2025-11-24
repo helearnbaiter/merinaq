@@ -293,6 +293,10 @@ impl QueryEngine {
             .await?;
         Ok(())
     }
+
+    pub fn context(&self) -> &SessionContext {
+        &self.context
+    }
 }
 
 // Query result structure
@@ -507,6 +511,8 @@ pub mod flight_sql;
 pub mod flight_sql_server;
 pub mod load_balancer;
 pub mod adbc;
+pub mod adbc_connection_pool;
+pub mod adbc_database_adapters;
 pub mod distributed_scheduler;
 pub mod optimizer;
 pub mod iceberg;
