@@ -1,0 +1,150 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data-processing-platform
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-processing-platform
+  namespace: data-processing-platform
+  labels:
+    app: data-processing-platform
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: data-processing-platform
+  template:
+    metadata:
+      labels:
+        app: data-processing-platform
+    spec:
+      containers:
+      - name: app
+        image: data-processing-platform:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: RUN_MODE
+          value: "production"
+        - name: APP_SERVER__HOST
+          value: "0.0.0.0"
+        - name: APP_SERVER__PORT
+          value: "8080"
+        - name: APP_DATABASE__URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: url
+        - name: APP_AUTH__JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: auth-secret
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-processing-platform-service
+  namespace: data-processing-platform
+  labels:
+    app: data-processing-platform
+spec:
+  selector:
+    app: data-processing-platform
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: data-processing-platform-ingress
+  namespace: data-processing-platform
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Content-Type, Authorization"
+spec:
+  rules:
+  - host: data-processing-platform.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: data-processing-platform-service
+            port:
+              number: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: data-processing-platform-hpa
+  namespace: data-processing-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: data-processing-platform
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

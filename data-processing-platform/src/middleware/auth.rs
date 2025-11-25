@@ -84,6 +84,7 @@ fn is_public_endpoint(path: &str) -> bool {
     // List of public endpoints that don't require authentication
     let public_endpoints = [
         "/health",
+        "/healthz",
         "/version",
         "/v1/auth/login",
         "/v1/auth/refresh",

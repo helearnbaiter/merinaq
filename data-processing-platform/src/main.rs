@@ -157,22 +157,34 @@ async fn main() -> PlatformResult<()> {
 
     // Build application with shared state using modular routing
     let app = api_version::create_api_router(
-        db_pool,
-        casbin_enforcer,
+        db_pool.clone(),
+        casbin_enforcer.clone(),
         Arc::new(tokio::sync::RwLock::new(auth_service)),
-        query_service,
-    )
-    // Add health check at the root level
-    .route("/health", get(handlers::health::health_check))
-    // Apply middleware
-    .layer(from_fn(middleware::tracing::tracing_middleware))
-    .layer(from_fn(middleware::auth::auth_middleware))
-    .layer(
-        CorsLayer::new()
-            .allow_origin(AllowOrigin::any())
-            .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
-            .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
+        query_service.clone(),
     );
+    
+    // Create health state for detailed health checks - use the same service instances
+    use crate::handlers::health::HealthState;
+    let health_state = Arc::new(HealthState {
+        db_pool: db_pool.clone(),
+        auth_service: Arc::new(tokio::sync::RwLock::new(AuthService::new(&config.auth))), // Create a minimal instance for health checks
+        query_service: query_service.clone(),
+        casbin_service: Arc::new(casbin_enforcer.clone()),
+    });
+    
+    // Add health checks at the root level
+    let app = app
+        .route("/health", get(handlers::health::health_check))
+        .route("/healthz", get(handlers::health::detailed_health_check).layer(Extension(health_state)))
+        // Apply middleware
+        .layer(from_fn(middleware::tracing::tracing_middleware))
+        .layer(from_fn(middleware::auth::auth_middleware))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::any())
+                .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+                .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
+        );
 
     // Start Flight SQL server in a background task if enabled
     let flight_enabled = std::env::var("FLIGHT_ENABLED")
