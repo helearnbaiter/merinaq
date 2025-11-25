@@ -16,4 +16,6 @@ pub fn create_router() -> Router {
         .route("/pool-stats", get(handlers::metrics::connection_pool_stats))
         .route("/circuit-breaker", get(handlers::metrics::circuit_breaker_status))
         .route("/history", get(handlers::metrics::historical_metrics))
+        .route("/alerts", get(handlers::metrics::active_alerts))
+        .route("/alerts/trigger", get(handlers::metrics::trigger_alert_check))
 }

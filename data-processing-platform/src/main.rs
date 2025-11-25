@@ -14,6 +14,7 @@ mod query_engine;
 mod utils;
 mod routes;
 mod api_version;
+mod monitoring;
 
 use axum::{
     extract::Extension,
@@ -155,13 +156,28 @@ async fn main() -> PlatformResult<()> {
     let adbc_service = Arc::new(AdbcService::new(query_engine.clone()));
     info!("ADBC service initialized");
 
+    // Initialize monitoring system
+    let connection_monitor = Arc::new(crate::query_engine::connection_monitor::ConnectionPoolMonitor::new(1000));
+    let alert_system = Arc::new(monitoring::AlertSystem::new());
+    
+    // Initialize default alert rules
+    monitoring::init_default_alerts(alert_system.clone()).await;
+    
+    // Initialize the monitoring system
+    monitoring::init_monitoring_system(connection_monitor.clone()).await.map_err(|e| {
+        PlatformError::InternalError(format!("Failed to initialize monitoring system: {}", e))
+    })?;
+    info!("Monitoring system initialized");
+    
     // Build application with shared state using modular routing
     let app = api_version::create_api_router(
         db_pool.clone(),
         casbin_enforcer.clone(),
         Arc::new(tokio::sync::RwLock::new(auth_service)),
         query_service.clone(),
-    );
+    )
+    .layer(Extension(connection_monitor))
+    .layer(Extension(alert_system));
     
     // Create health state for detailed health checks - use the same service instances
     use crate::handlers::health::HealthState;
