@@ -554,6 +554,7 @@ pub mod load_balancer;
 pub mod adbc;
 pub mod adbc_connection_pool;
 pub mod adbc_database_adapters;
+pub mod connection_monitor;
 pub mod distributed_scheduler;
 pub mod optimizer;
 pub mod iceberg;

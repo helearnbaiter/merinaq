@@ -11,6 +11,7 @@ use tokio::time::sleep;
 use async_trait::async_trait;
 
 use super::adbc::{AdbcConnection, AdbcDatabase, AdbcResult};
+use super::connection_monitor::{ConnectionPoolMonitor, CircuitBreakerConfig};
 
 /// Pooled connection wrapper that returns the connection to the pool when dropped
 pub struct PooledConnection {
@@ -90,6 +91,8 @@ impl ConnectionPoolInner {
 /// Connection pool for ADBC connections
 pub struct ConnectionPool {
     inner: Arc<ConnectionPoolInner>,
+    monitor: Arc<ConnectionPoolMonitor>,
+    pool_id: String,
 }
 
 impl ConnectionPool {
@@ -106,61 +109,108 @@ impl ConnectionPool {
             total_connections: std::sync::atomic::AtomicUsize::new(0),
         });
 
+        // Create a monitor instance
+        let monitor = Arc::new(ConnectionPoolMonitor::new(1000)); // Keep last 1000 metrics
+        let pool_id = format!("adbc_pool_{}", uuid::Uuid::new_v4());
+
         // Spawn background task to maintain the pool
         let pool_inner = Arc::clone(&inner);
+        let monitor_clone = Arc::clone(&monitor);
+        let pool_id_clone = pool_id.clone();
         tokio::spawn(async move {
             loop {
                 sleep(Duration::from_secs(30)).await; // Run maintenance every 30 seconds
                 pool_inner.maintain_pool().await;
+                
+                // Update metrics
+                let stats = pool_inner.stats().await;
+                monitor_clone.update_from_connection_pool(
+                    &pool_id_clone,
+                    stats.available_connections,
+                    stats.total_connections,
+                    pool_inner.config.max_connections,
+                    pool_inner.config.max_connections - pool_inner.semaphore.available_permits(),
+                ).await;
             }
         });
 
-        Self { inner }
+        Self { 
+            inner,
+            monitor,
+            pool_id,
+        }
     }
 
     /// Get a connection from the pool
     pub async fn get_connection(&self) -> AdbcResult<PooledConnection> {
+        // Check circuit breaker before attempting to get a connection
+        if let Err(e) = self.monitor.check_circuit_breaker(&self.pool_id).await {
+            self.monitor.record_failure(&self.pool_id).await;
+            return Err(super::adbc::AdbcError::Internal(format!("Circuit breaker tripped: {}", e)));
+        }
+
         // Acquire a permit (respects max connections)
         let _permit = self.inner.semaphore.acquire().await
             .map_err(|_| super::adbc::AdbcError::Internal("Semaphore closed".to_string()))?;
 
         // Try to get an available connection
-        {
+        let result = {
             let mut available = self.inner.available_connections.lock().await;
             if let Some(mut pooled_data) = available.pop_front() {
                 pooled_data.last_used_at = Instant::now();
                 let connection = pooled_data.connection;
                 
-                return Ok(PooledConnection {
+                Ok(PooledConnection {
                     connection: Some(connection),
                     pool: Arc::clone(&self.inner),
                     checkout_time: Instant::now(),
-                });
+                })
+            } else {
+                // No available connections, create a new one if under limit
+                let new_connection = self.inner.database.connect().await?;
+                self.inner.total_connections.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+                Ok(PooledConnection {
+                    connection: Some(new_connection),
+                    pool: Arc::clone(&self.inner),
+                    checkout_time: Instant::now(),
+                })
+            }
+        };
+
+        match result {
+            Ok(conn) => {
+                self.monitor.record_success(&self.pool_id).await;
+                Ok(conn)
+            }
+            Err(e) => {
+                self.monitor.record_failure(&self.pool_id).await;
+                Err(e)
             }
         }
-
-        // No available connections, create a new one if under limit
-        let new_connection = self.inner.database.connect().await?;
-        self.inner.total_connections.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-        Ok(PooledConnection {
-            connection: Some(new_connection),
-            pool: Arc::clone(&self.inner),
-            checkout_time: Instant::now(),
-        })
     }
 
     /// Get current pool statistics
     pub async fn stats(&self) -> PoolStats {
         let available = self.inner.available_connections.lock().await.len();
         let total = self.inner.total_connections.load(std::sync::atomic::Ordering::SeqCst);
-        let waiting = self.inner.semaphore.available_permits();
+        let waiting = self.inner.config.max_connections - self.inner.semaphore.available_permits();
         
         PoolStats {
             available_connections: available,
             total_connections: total,
             waiting_count: waiting,
         }
+    }
+
+    /// Get the connection pool monitor
+    pub fn monitor(&self) -> &ConnectionPoolMonitor {
+        &self.monitor
+    }
+
+    /// Get the pool ID
+    pub fn pool_id(&self) -> &str {
+        &self.pool_id
     }
 }
 

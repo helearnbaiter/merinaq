@@ -10,7 +10,7 @@ use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 use futures;
 
-use crate::query_engine::{QueryEngine, adbc::{AdbcResult, AdbcError, AdbcDriver, QueryEngineAdbcDatabase}, adbc_connection_pool::{ConnectionPool, PoolConfig}, adbc_database_adapters::{DatabaseConfig, DatabaseType, DatabaseAdapterFactory}};
+use crate::query_engine::{QueryEngine, adbc::{AdbcResult, AdbcError, AdbcDriver, QueryEngineAdbcDatabase}, adbc_connection_pool::{ConnectionPool, PoolConfig}, adbc_database_adapters::{DatabaseConfig, DatabaseType, DatabaseAdapterFactory}, connection_monitor::ConnectionPoolMonitor};
 
 /// ADBC Service that manages connections and executes queries
 pub struct AdbcService {
@@ -18,6 +18,7 @@ pub struct AdbcService {
     connection_pools: HashMap<String, Arc<ConnectionPool>>,
     adapter_factory: DatabaseAdapterFactory,
     query_engine: Arc<QueryEngine>,
+    monitor: Arc<ConnectionPoolMonitor>,
 }
 
 impl AdbcService {
@@ -26,6 +27,7 @@ impl AdbcService {
         let mut driver = AdbcDriver::new();
         let connection_pools = HashMap::new();
         let adapter_factory = DatabaseAdapterFactory::new();
+        let monitor = Arc::new(ConnectionPoolMonitor::new(1000)); // Keep last 1000 metrics
         
         // Register the default query engine database
         let query_engine_db = Arc::new(QueryEngineAdbcDatabase::new(query_engine.clone()));
@@ -36,6 +38,7 @@ impl AdbcService {
             connection_pools,
             adapter_factory,
             query_engine,
+            monitor,
         }
     }
 

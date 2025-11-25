@@ -9,6 +9,7 @@ pub mod queries;
 pub mod policies;
 pub mod bi_integration;
 pub mod health;
+pub mod metrics;
 
 use axum::{
     routing::{get, post, put, delete},
@@ -34,6 +35,9 @@ pub fn create_v1_router(
     Router::new()
         // Health check endpoint
         .nest("/health", health::create_router())
+        
+        // Metrics and monitoring endpoints
+        .nest("/metrics", metrics::create_router())
         
         // Authentication routes
         .nest("/auth", auth::create_router())
