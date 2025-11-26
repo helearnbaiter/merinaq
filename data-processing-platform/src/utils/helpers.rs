@@ -1,4 +1,4 @@
-//! Utility functions and helpers
+//! Helper functions and utilities
 //! 
 //! Contains common utility functions used throughout the application
 
