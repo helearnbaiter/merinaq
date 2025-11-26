@@ -11,12 +11,16 @@
 # Dependencies
 target/
 **/target/
-Cargo.lock
 
 # Logs and temp files
 *.log
 *.tmp
 *.swp
+
+# Environment
+.env
+.env.local
+*.env.*
 
 # Editors
 .vscode/
@@ -24,12 +28,7 @@ Cargo.lock
 *.swp
 *.swo
 
-# Environment
-.env
-.env.local
-*.env.*
-
 # Rust-specific
-**/target/
 Cargo.lock
+**/Cargo.lock
 ```
