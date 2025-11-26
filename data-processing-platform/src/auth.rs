@@ -2,7 +2,7 @@
 //! 
 //! Contains JWT token handling, password hashing, and OAuth2 utilities
 
-use jsonwebtoken::{encode, decode, Header, Validation};
+use jsonwebtoken::{encode, decode, Header, Validation, Algorithm, EncodingKey, DecodingKey};
 use serde::{Deserialize, Serialize};
 use bcrypt::{hash, verify, DEFAULT_COST};
 use anyhow::Result;
@@ -35,7 +35,9 @@ impl JwtUtils {
             role,
         };
 
-        let token = encode(&Header::default(), &claims, &self.secret.as_ref().into())?;
+        let header = Header::new(Algorithm::HS256);
+        let encoding_key = EncodingKey::from_secret(self.secret.as_ref());
+        let token = encode(&header, &claims, &encoding_key)?;
         Ok(token)
     }
 
@@ -48,14 +50,17 @@ impl JwtUtils {
             role,
         };
 
-        let token = encode(&Header::default(), &claims, &self.secret.as_ref().into())?;
+        let header = Header::new(Algorithm::HS256);
+        let encoding_key = EncodingKey::from_secret(self.secret.as_ref());
+        let token = encode(&header, &claims, &encoding_key)?;
         Ok(token)
     }
 
     pub fn validate_token(&self, token: &str) -> Result<TokenClaims> {
-        let mut validation = Validation::default();
+        let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = true;
-        let token_data = decode::<TokenClaims>(token, &self.secret.as_ref().into(), &validation)?;
+        let decoding_key = DecodingKey::from_secret(self.secret.as_ref());
+        let token_data = decode::<TokenClaims>(token, &decoding_key, &validation)?;
         Ok(token_data.claims)
     }
 }
