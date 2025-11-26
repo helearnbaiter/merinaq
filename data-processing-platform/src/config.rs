@@ -171,7 +171,7 @@ impl AppConfig {
             // Start with the base configuration
             .add_source(File::with_name("config/base"))
             // Add environment-specific configuration
-            .add_source(File::with_name(&format!("config/{}", environment)).required(false))
+            .add_source(File::with_name(format!("config/{}", environment).as_str()).required(false))
             // Add in settings from the environment (with a prefix of APP)
             // Eg.. `APP_DEBUG=1` would set the `debug` key
             .add_source(Environment::with_prefix("APP").separator("__"));
