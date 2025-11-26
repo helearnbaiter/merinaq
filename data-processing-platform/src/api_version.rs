@@ -4,12 +4,14 @@
 
 use axum::{
     extract::Path,
-    http::Request,
     middleware::{from_fn},
-    response::Response,
+    response::IntoResponse,
     routing::{get, Router},
 };
 use std::sync::Arc;
+use axum::extract::Request;
+use axum::middleware::Next;
+use axum::response::Response;
 use tokio::sync::RwLock;
 
 use crate::{
@@ -67,16 +69,16 @@ pub fn create_api_router(
 }
 
 /// Handler for the root path
-async fn root_handler() -> Response {
+async fn root_handler() -> impl IntoResponse {
     use axum::Json;
     use crate::models::ApiResponse;
     
     let response = ApiResponse::success("Welcome to Data Processing Platform API");
-    (axum::http::StatusCode::OK, Json(response)).into_response()
+    (axum::http::StatusCode::OK, Json(response))
 }
 
 /// Handler for version info
-async fn version_handler() -> Response {
+async fn version_handler() -> impl IntoResponse {
     use axum::Json;
     use crate::models::ApiResponse;
     
@@ -89,23 +91,25 @@ async fn version_handler() -> Response {
     });
     
     let response = ApiResponse::success(version_info);
-    (axum::http::StatusCode::OK, Json(response)).into_response()
+    (axum::http::StatusCode::OK, Json(response))
 }
 
 /// Middleware to handle version-specific operations
-pub async fn version_middleware<B>(
-    request: Request<B>,
-    next: axum::middleware::Next<B>,
+pub async fn version_middleware(
+    request: Request,
+    next: Next,
 ) -> Result<Response, axum::http::StatusCode> {
     // Add version-specific headers or perform version-specific operations
+
+    // next.run(request) 现在的签名非常简洁
     let mut response = next.run(request).await;
-    
+
     // Add API version header to response
     response.headers_mut().insert(
         "X-API-Version",
         axum::http::HeaderValue::from_static("v1")
     );
-    
+
     Ok(response)
 }
 
