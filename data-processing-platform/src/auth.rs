@@ -10,6 +10,7 @@ use chrono::Utc;
 use std::collections::HashMap;
 use reqwest::Client;
 use serde_json::Value;
+use tracing::log::kv::ToKey;
 use uuid::{Uuid, Timestamp, NoContext};
 
 use crate::models::TokenClaims;
@@ -88,11 +89,10 @@ impl OAuth2SessionManager {
     }
 
     pub fn generate_state(&mut self, redirect_uri: Option<String>) -> String {
-        let timestamp = Utc::now().timestamp();
-        let state = Uuid::new_v7(Timestamp::from_unix(NoContext, timestamp as u64)).to_string();
+        let state = Uuid::now_v7().to_string();
         
-        self.active_states.insert(state.clone(), OAuth2State {
-            state: state.clone(),
+        self.active_states.insert(state.to_owned(), OAuth2State {
+            state: state.to_owned(),
             timestamp,
             redirect_uri,
         });
@@ -188,10 +188,10 @@ impl OAuth2Provider {
     pub async fn exchange_code_for_token(&self, code: &str) -> Result<HashMap<String, String>> {
         let params = [
             ("grant_type", "authorization_code"),
-            ("client_id", &self.config.client_id),
-            ("client_secret", &self.config.client_secret),
+            ("client_id", &self.config.client_id.as_str()),
+            ("client_secret", &self.config.client_secret.as_str()),
             ("code", code),
-            ("redirect_uri", &self.config.redirect_url),
+            ("redirect_uri", &self.config.redirect_url.as_str()),
         ];
 
         let response = self.client
@@ -230,7 +230,7 @@ impl OAuth2Provider {
             id: user_data.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             email: user_data.get("email").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             name: user_data.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            provider: self.name.clone(),
+            provider: self.name.to_owned(),
         })
     }
 }
