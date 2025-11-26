@@ -36,7 +36,7 @@ impl JwtUtils {
         };
 
         let header = Header::new(Algorithm::HS256);
-        let encoding_key = EncodingKey::from_secret(self.secret.as_ref());
+        let encoding_key = EncodingKey::from_secret(self.secret.as_bytes());
         let token = encode(&header, &claims, &encoding_key)?;
         Ok(token)
     }
@@ -51,7 +51,7 @@ impl JwtUtils {
         };
 
         let header = Header::new(Algorithm::HS256);
-        let encoding_key = EncodingKey::from_secret(self.secret.as_ref());
+        let encoding_key = EncodingKey::from_secret(self.secret.as_bytes());
         let token = encode(&header, &claims, &encoding_key)?;
         Ok(token)
     }
@@ -59,7 +59,7 @@ impl JwtUtils {
     pub fn validate_token(&self, token: &str) -> Result<TokenClaims> {
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = true;
-        let decoding_key = DecodingKey::from_secret(self.secret.as_ref());
+        let decoding_key = DecodingKey::from_secret(self.secret.as_bytes());
         let token_data = decode::<TokenClaims>(token, &decoding_key, &validation)?;
         Ok(token_data.claims)
     }
@@ -168,7 +168,7 @@ impl OAuth2Provider {
         }
     }
 
-    pub async fn get_authorization_url(&self, state: &str, scopes: Option<&[&str]>) -> String {
+    pub fn get_authorization_url(&self, state: &str, scopes: Option<&[&str]>) -> String {
         let scope_str = if let Some(scopes) = scopes {
             format!("&scope={}", scopes.join("+"))
         } else {
