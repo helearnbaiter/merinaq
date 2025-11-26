@@ -10,7 +10,7 @@ use chrono::Utc;
 use std::collections::HashMap;
 use reqwest::Client;
 use serde_json::Value;
-use uuid::Uuid;
+use uuid::{Uuid, Timestamp, NoContext};
 
 use crate::models::TokenClaims;
 
@@ -88,8 +88,8 @@ impl OAuth2SessionManager {
     }
 
     pub fn generate_state(&mut self, redirect_uri: Option<String>) -> String {
-        let state = Uuid::new_v4().to_string();
         let timestamp = Utc::now().timestamp();
+        let state = Uuid::new_v7(Timestamp::from_unix(NoContext, timestamp as u64)).to_string();
         
         self.active_states.insert(state.clone(), OAuth2State {
             state: state.clone(),
