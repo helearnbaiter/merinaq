@@ -184,6 +184,16 @@ impl<T> ApiResponse<T> {
         }
     }
 
+    pub fn success_with_request_id(data: T, request_id: String) -> Self {
+        ApiResponse {
+            success: true,
+            data: Some(data),
+            error: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            request_id: Some(request_id),
+        }
+    }
+
     pub fn error(code: &str, message: &str) -> Self {
         ApiResponse {
             success: false,
@@ -195,6 +205,34 @@ impl<T> ApiResponse<T> {
             }),
             timestamp: chrono::Utc::now().to_rfc3339(),
             request_id: None,
+        }
+    }
+
+    pub fn error_with_details(code: &str, message: &str, details: serde_json::Value) -> Self {
+        ApiResponse {
+            success: false,
+            data: None,
+            error: Some(ApiError {
+                code: code.to_string(),
+                message: message.to_string(),
+                details: Some(details),
+            }),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            request_id: None,
+        }
+    }
+
+    pub fn error_with_request_id(code: &str, message: &str, request_id: String) -> Self {
+        ApiResponse {
+            success: false,
+            data: None,
+            error: Some(ApiError {
+                code: code.to_string(),
+                message: message.to_string(),
+                details: None,
+            }),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            request_id: Some(request_id),
         }
     }
 }
