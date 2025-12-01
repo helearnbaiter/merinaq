@@ -1,7 +1,7 @@
-//! Standardized API Response Utilities
+//! Unified response handling for the axum-based data processing platform
 //! 
-//! This module provides utilities for creating standardized API responses
-//! that follow the unified response format.
+//! This module provides a comprehensive and consistent way to handle API responses
+//! throughout the application, following the ApiResponse<T> structure defined in models.rs.
 
 use axum::{
     http::StatusCode,
@@ -315,13 +315,24 @@ impl<T: Serialize> ResponseBuilder<T> {
     }
     
     pub fn build(self) -> ApiResponse<T> {
-        ApiResponse {
+        let mut response = ApiResponse {
             success: self.success,
             data: self.data,
             error: self.error,
             timestamp: self.timestamp,
             request_id: self.request_id,
+        };
+        
+        // If there's meta data, we need to extend the response with it
+        if let Some(meta) = self.meta {
+            let mut response_json = serde_json::to_value(response).unwrap();
+            if let serde_json::Value::Object(ref mut map) = response_json {
+                map.insert("meta".to_string(), meta);
+            }
+            response = serde_json::from_value(response_json).unwrap();
         }
+        
+        response
     }
     
     pub fn build_with_status(self, status: StatusCode) -> (StatusCode, Json<ApiResponse<T>>) {

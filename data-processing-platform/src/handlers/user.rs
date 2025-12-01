@@ -14,6 +14,7 @@ use crate::{
     database::DatabasePool,
     models::{ApiResponse, User, NewUser, UpdateUser},
     services::auth_service::AuthService,
+    utils::response::helpers,
 };
 
 pub async fn get_users(
@@ -21,7 +22,9 @@ pub async fn get_users(
 ) -> impl IntoResponse {
     // This would typically query the database for users
     // For now, we'll return an empty list
-    (StatusCode::OK, Json(ApiResponse::success(Vec::<User>::new())))
+    // Using the new response helper trait
+    let users: Vec<User> = Vec::new();
+    users.success_response()
 }
 
 pub async fn get_user(
@@ -30,7 +33,8 @@ pub async fn get_user(
 ) -> impl IntoResponse {
     // This would typically query the database for a specific user
     // For now, we'll return a not found response
-    (StatusCode::NOT_FOUND, Json(ApiResponse::<User>::error("USER_001", "User not found")))
+    // Using the new helpers module
+    helpers::not_found("User not found")
 }
 
 pub async fn create_user(
@@ -40,7 +44,8 @@ pub async fn create_user(
 ) -> impl IntoResponse {
     // In a real implementation, we'd validate the input and create the user
     // For now, we'll return a not implemented response
-    (StatusCode::NOT_IMPLEMENTED, Json(ApiResponse::<User>::error("USER_002", "User creation not implemented")))
+    // Using the new helpers module
+    helpers::internal_server_error("User creation not implemented")
 }
 
 pub async fn update_user(
