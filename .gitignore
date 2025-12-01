@@ -7,10 +7,8 @@ __pycache__/
 *.exe
 *.dll
 *.so
-*.class
-target/
-dist/
-build/
+*.a
+*.out
 
 # Dependencies
 node_modules/
@@ -29,44 +27,18 @@ venv/
 # Editors
 .vscode/
 .idea/
-*.swp
-*.swo
-
-# System files
-.DS_Store
-Thumbs.db
 
 # Coverage
 coverage/
 htmlcov/
 .coverage
 
-# Compressed files
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-*.lz4
-*.lzh
-*.cab
-*.arj
-*.rpm
-*.deb
-*.Z
-*.lz
-*.lzo
-*.tar.gz
-*.tar.bz2
-*.tar.xz
-*.tar.zst
+# Build directories (common in Rust projects)
+target/
 
-# Cache directories
+# MyPy cache
 .mypy_cache/
+
+# Pytest cache
 .pytest_cache/
-.gradle/
 ```
